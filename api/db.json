@@ -1,0 +1,383 @@
+{
+  "properties": [
+    {
+      "id": "prop-1",
+      "name": "House A",
+      "type": "Residential",
+      "totalRooms": 10,
+      "occupied": 8,
+      "vacant": 2,
+      "monthlyRevenue": 25000
+    },
+    {
+      "id": "prop-2",
+      "name": "House B",
+      "type": "Residential",
+      "totalRooms": 15,
+      "occupied": 12,
+      "vacant": 3,
+      "monthlyRevenue": 38000
+    },
+    {
+      "id": "prop-3",
+      "name": "Shop Complex",
+      "type": "Commercial",
+      "totalRooms": 5,
+      "occupied": 4,
+      "vacant": 1,
+      "monthlyRevenue": 60000
+    }
+  ],
+  "tenants": [
+    {
+      "id": "tenant-1",
+      "name": "Ravi Kumar",
+      "fatherName": "Suresh Kumar",
+      "phone": "9876543210",
+      "altPhone": "9876543211",
+      "email": "ravi.kumar@gmail.com",
+      "occupation": "Software Engineer",
+      "aadhaar": "1234 5678 9012",
+      "pan": "ABCDE1234F",
+      "permanentAddress": "123, Main Street, Patna, Bihar",
+      "currentAddress": "Room 101, House A, Rentify Complex",
+      "propertyId": "prop-1",
+      "propertyName": "House A",
+      "roomNumber": "101",
+      "roomType": "Room",
+      "moveInDate": "2025-04-10",
+      "agreementDuration": 12,
+      "rentAmount": 2500,
+      "securityDeposit": 5000,
+      "electricityRate": 6,
+      "waterCharges": 150,
+      "status": "Active",
+      "photo": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150",
+      "documents": {
+        "profilePhoto": "profile.jpg",
+        "aadhaarFront": "aadhaar_front.jpg",
+        "aadhaarBack": "aadhaar_back.jpg",
+        "pan": "pan.jpg",
+        "agreement": "agreement.pdf",
+        "others": []
+      }
+    },
+    {
+      "id": "tenant-2",
+      "name": "Priya Sharma",
+      "fatherName": "Ramesh Sharma",
+      "phone": "9812345678",
+      "altPhone": "9812345679",
+      "email": "priya.sharma@yahoo.com",
+      "occupation": "Teacher",
+      "aadhaar": "9876 5432 1098",
+      "pan": "WXYZP9876Q",
+      "permanentAddress": "Sector 15, Noida, UP",
+      "currentAddress": "Room 102, House A, Rentify Complex",
+      "propertyId": "prop-1",
+      "propertyName": "House A",
+      "roomNumber": "102",
+      "roomType": "Room",
+      "moveInDate": "2025-05-01",
+      "agreementDuration": 11,
+      "rentAmount": 3500,
+      "securityDeposit": 7000,
+      "electricityRate": 6,
+      "waterCharges": 150,
+      "status": "Active",
+      "photo": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
+      "documents": {
+        "profilePhoto": "profile_priya.jpg",
+        "aadhaarFront": "aadhaar_p_front.jpg",
+        "aadhaarBack": "aadhaar_p_back.jpg",
+        "pan": "pan_p.jpg",
+        "agreement": "agreement_p.pdf",
+        "others": []
+      }
+    },
+    {
+      "id": "tenant-3",
+      "name": "Amit Patel",
+      "fatherName": "Dinesh Patel",
+      "phone": "9012345678",
+      "altPhone": "9012345679",
+      "email": "amit.patel@gmail.com",
+      "occupation": "Retail Business Owner",
+      "aadhaar": "1111 2222 3333",
+      "pan": "KKKAA5555L",
+      "permanentAddress": "Vastrapur, Ahmedabad, Gujarat",
+      "currentAddress": "Shop 3, Shop Complex, Rentify Complex",
+      "propertyId": "prop-3",
+      "propertyName": "Shop Complex",
+      "roomNumber": "Shop 3",
+      "roomType": "Shop",
+      "moveInDate": "2024-11-15",
+      "agreementDuration": 24,
+      "rentAmount": 15000,
+      "securityDeposit": 30000,
+      "electricityRate": 8,
+      "waterCharges": 500,
+      "status": "Active",
+      "photo": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150",
+      "documents": {
+        "profilePhoto": "profile_amit.jpg",
+        "aadhaarFront": "aadhaar_a_front.jpg",
+        "aadhaarBack": "aadhaar_a_back.jpg",
+        "pan": "pan_a.jpg",
+        "agreement": "agreement_a.pdf",
+        "others": []
+      }
+    }
+  ],
+  "bills": [
+    {
+      "id": "bill-1",
+      "tenantId": "tenant-1",
+      "tenantName": "Ravi Kumar",
+      "roomNumber": "101",
+      "propertyName": "House A",
+      "billingMonth": "June 2026",
+      "rentAmount": 2500,
+      "electricityUnits": 100,
+      "electricityRate": 6,
+      "electricityAmount": 600,
+      "waterCharges": 150,
+      "lateFee": 0,
+      "discount": 0,
+      "extraCharges": 0,
+      "extraChargesReason": "",
+      "totalAmount": 3250,
+      "paidAmount": 3000,
+      "pendingAmount": 250,
+      "status": "Partial Paid",
+      "dueDate": "2026-06-15",
+      "payments": [
+        {
+          "date": "2026-06-10",
+          "amount": 2000,
+          "method": "Cash",
+          "note": "Advance partial"
+        },
+        {
+          "date": "2026-06-14",
+          "amount": 1000,
+          "method": "UPI",
+          "note": "Sent via GPay"
+        }
+      ]
+    },
+    {
+      "id": "bill-2",
+      "tenantId": "tenant-2",
+      "tenantName": "Priya Sharma",
+      "roomNumber": "102",
+      "propertyName": "House A",
+      "billingMonth": "June 2026",
+      "rentAmount": 3500,
+      "electricityUnits": 120,
+      "electricityRate": 6,
+      "electricityAmount": 720,
+      "waterCharges": 150,
+      "lateFee": 0,
+      "discount": 100,
+      "extraCharges": 0,
+      "extraChargesReason": "",
+      "totalAmount": 4270,
+      "paidAmount": 4270,
+      "pendingAmount": 0,
+      "status": "Paid",
+      "dueDate": "2026-06-15",
+      "payments": [
+        {
+          "date": "2026-06-12",
+          "amount": 4270,
+          "method": "Bank Transfer",
+          "note": "NetBanking"
+        }
+      ]
+    },
+    {
+      "id": "bill-3",
+      "tenantId": "tenant-3",
+      "tenantName": "Amit Patel",
+      "roomNumber": "Shop 3",
+      "propertyName": "Shop Complex",
+      "billingMonth": "June 2026",
+      "rentAmount": 15000,
+      "electricityUnits": 450,
+      "electricityRate": 8,
+      "electricityAmount": 3600,
+      "waterCharges": 500,
+      "lateFee": 200,
+      "discount": 0,
+      "extraCharges": 0,
+      "extraChargesReason": "",
+      "totalAmount": 19300,
+      "paidAmount": 0,
+      "pendingAmount": 19300,
+      "status": "Unpaid",
+      "dueDate": "2026-06-15",
+      "payments": []
+    }
+  ],
+  "comments": [
+    {
+      "id": "comment-1",
+      "tenantId": "tenant-1",
+      "tenantName": "Ravi Kumar",
+      "roomNumber": "101",
+      "title": "Fan is not working",
+      "category": "Maintenance",
+      "status": "In Progress",
+      "createdAt": "2026-06-20T10:00:00Z",
+      "unreadByOwner": true,
+      "unreadByTenant": false,
+      "replies": [
+        {
+          "id": "reply-1",
+          "sender": "tenant",
+          "name": "Ravi Kumar",
+          "message": "The ceiling fan in Room 101 is making a humming sound and not spinning at speed.",
+          "createdAt": "2026-06-20T10:00:00Z"
+        },
+        {
+          "id": "reply-2",
+          "sender": "owner",
+          "name": "Owner / Landlord",
+          "message": "Thanks for informing, Ravi. I have contacted electrician Vinod. He will visit tomorrow (21st June) by 11:00 AM.",
+          "createdAt": "2026-06-20T14:30:00Z"
+        }
+      ]
+    },
+    {
+      "id": "comment-2",
+      "tenantId": "tenant-2",
+      "tenantName": "Priya Sharma",
+      "roomNumber": "102",
+      "title": "Water tap leaking in toilet",
+      "category": "Plumbing",
+      "status": "Open",
+      "createdAt": "2026-06-22T08:15:00Z",
+      "unreadByOwner": true,
+      "unreadByTenant": false,
+      "replies": [
+        {
+          "id": "reply-3",
+          "sender": "tenant",
+          "name": "Priya Sharma",
+          "message": "The main toilet flush tap is leaking water continuously. Please fix this soon to avoid water wastage.",
+          "createdAt": "2026-06-22T08:15:00Z"
+        }
+      ]
+    }
+  ],
+  "chats": [
+    {
+      "id": "chat-1",
+      "tenantId": "tenant-1",
+      "tenantName": "Ravi Kumar",
+      "tenantPhoto": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150",
+      "unreadCount": 2,
+      "lastUpdated": "2026-06-23T00:39:55.666Z",
+      "messages": [
+        {
+          "id": "msg-1",
+          "sender": "owner",
+          "text": "Hello Ravi, please pay the outstanding rent balance of ₹250.",
+          "timestamp": "2026-06-22T10:00:00Z",
+          "seen": true
+        },
+        {
+          "id": "msg-2",
+          "sender": "tenant",
+          "text": "Hi sir, I will clear it along with next month rent if that is ok?",
+          "timestamp": "2026-06-22T18:30:00Z",
+          "seen": true
+        },
+        {
+          "id": "msg-3",
+          "sender": "tenant",
+          "text": "Or I can pay by cash this Friday.",
+          "timestamp": "2026-06-22T18:45:00Z",
+          "seen": false
+        },
+        {
+          "id": "msg-1782175195666",
+          "sender": "tenant",
+          "text": "Hello landlord",
+          "timestamp": "2026-06-23T00:39:55.666Z",
+          "seen": false
+        }
+      ]
+    },
+    {
+      "id": "chat-2",
+      "tenantId": "tenant-2",
+      "tenantName": "Priya Sharma",
+      "tenantPhoto": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
+      "unreadCount": 0,
+      "lastUpdated": "2026-06-21T09:12:00Z",
+      "messages": [
+        {
+          "id": "msg-4",
+          "sender": "tenant",
+          "text": "Here is the payment screenshot for this month.",
+          "timestamp": "2026-06-21T09:05:00Z",
+          "seen": true,
+          "attachment": "receipt_june.png",
+          "attachmentType": "image"
+        },
+        {
+          "id": "msg-5",
+          "sender": "owner",
+          "text": "Received, thank you Priya!",
+          "timestamp": "2026-06-21T09:12:00Z",
+          "seen": true
+        }
+      ]
+    }
+  ],
+  "notifications": [
+    {
+      "id": "notif-1",
+      "title": "New Payment Received",
+      "message": "Priya Sharma paid ₹4270 for June 2026.",
+      "time": "2026-06-12T09:00:00Z",
+      "forRole": "owner",
+      "read": true
+    },
+    {
+      "id": "notif-2",
+      "title": "Partial Payment Logged",
+      "message": "Ravi Kumar paid ₹1000 via UPI.",
+      "time": "2026-06-14T11:20:00Z",
+      "forRole": "owner",
+      "read": false
+    },
+    {
+      "id": "notif-3",
+      "title": "Maintenance Issue Logged",
+      "message": "Ravi Kumar reported: Fan is not working.",
+      "time": "2026-06-20T10:05:00Z",
+      "forRole": "owner",
+      "read": false
+    },
+    {
+      "id": "notif-4",
+      "title": "Bill Generated",
+      "message": "Your bill of ₹3250 for June 2026 has been generated.",
+      "time": "2026-06-01T08:00:00Z",
+      "forRole": "tenant",
+      "tenantId": "tenant-1",
+      "read": false
+    },
+    {
+      "id": "notif-1782175195666",
+      "title": "New Chat from Ravi Kumar",
+      "message": "Hello landlord",
+      "time": "2026-06-23T00:39:55.666Z",
+      "forRole": "owner",
+      "read": false
+    }
+  ]
+}

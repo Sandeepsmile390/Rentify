@@ -1,0 +1,183 @@
+import axios from 'axios';
+import * as SecureStore from 'expo-secure-store';
+
+// In React Native development (Expo), localhost points to the emulator.
+// Change to your machine's IP (e.g. 192.168.x.x) for physical device testing.
+const API_BASE_URL = 'http://localhost:5000/api';
+
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Interceptor to inject stored tokens into headers
+api.interceptors.request.use(
+  async (config) => {
+    try {
+      const accessToken = await SecureStore.getItemAsync('accessToken');
+      const refreshToken = await SecureStore.getItemAsync('refreshToken');
+      
+      if (accessToken) {
+        config.headers.Authorization = `Bearer ${accessToken}`;
+      }
+      if (refreshToken) {
+        config.headers['x-refresh-token'] = refreshToken;
+      }
+    } catch (e) {
+      console.warn('Failed to retrieve security tokens:', e);
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// Interceptor to store tokens returned in auth responses
+api.interceptors.response.use(
+  async (response) => {
+    // If the API call succeeded and returned tokens (e.g. on login or refresh), save them
+    if (response.data && response.data.success) {
+      // NOTE: Axios calls don't return set-cookie headers to SecureStore automatically,
+      // but in React Native the login response contains tokens or we can parse them.
+      // If server returns access/refresh token in the body for mobile clients:
+      if (response.data.accessToken) {
+        await SecureStore.setItemAsync('accessToken', response.data.accessToken);
+      }
+      if (response.data.refreshToken) {
+        await SecureStore.setItemAsync('refreshToken', response.data.refreshToken);
+      }
+    }
+    return response;
+  },
+  async (error) => {
+    // Handle token expiration / session invalidation
+    if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+      // Clear token store
+      await SecureStore.deleteItemAsync('accessToken');
+      await SecureStore.deleteItemAsync('refreshToken');
+    }
+    return Promise.reject(error);
+  }
+);
+
+export const authService = {
+  // Owner login (email/phone + password)
+  login: async (credentials) => {
+    // credentials: { email, phone, password, role: 'owner' }
+    const response = await api.post('/auth/login', credentials);
+    const data = response.data;
+    if (data.success && data.user) {
+      // If headers cookies aren't set in React Native, we extract tokens from body
+      // We make sure server returns tokens in body, which server.js does on success
+    }
+    return data;
+  },
+
+  // Tenant login (tenantLoginId + password)
+  tenantLogin: async (tenantLoginId, password, rememberMe) => {
+    const response = await api.post('/auth/tenant-login', { tenantLoginId, password, rememberMe });
+    return response.data;
+  },
+
+  // Forced password change on first login
+  changePasswordFirst: async (oldPassword, newPassword) => {
+    const response = await api.post('/auth/change-password-first', { oldPassword, newPassword });
+    return response.data;
+  },
+
+  // Change password for logged in session
+  changePassword: async (oldPassword, newPassword) => {
+    const response = await api.post('/auth/change-password', { oldPassword, newPassword });
+    return response.data;
+  },
+
+  // Revoke session list
+  getSessions: async () => {
+    const response = await api.get('/auth/sessions');
+    return response.data;
+  },
+
+  // Log out a specific session by ID
+  logoutSession: async (sessionId) => {
+    const response = await api.delete(`/auth/sessions/${sessionId}`);
+    return response.data;
+  },
+
+  // Logout from all devices
+  logoutAllSessions: async () => {
+    const response = await api.post('/auth/logout-all');
+    // Clear local storage
+    await SecureStore.deleteItemAsync('accessToken');
+    await SecureStore.deleteItemAsync('refreshToken');
+    return response.data;
+  },
+
+  // Logout current session
+  logout: async () => {
+    const response = await api.post('/auth/logout');
+    await SecureStore.deleteItemAsync('accessToken');
+    await SecureStore.deleteItemAsync('refreshToken');
+    return response.data;
+  },
+
+  // Get current user profile
+  getProfile: async () => {
+    const response = await api.get('/auth/me');
+    return response.data;
+  }
+};
+
+export const billService = {
+  getBills: async () => {
+    const response = await api.get('/bills');
+    return response.data;
+  },
+  payBill: async (billId, amount, method, note) => {
+    const response = await api.post('/payments', { billId, amount, method, note });
+    return response.data;
+  }
+};
+
+export const chatService = {
+  getChats: async () => {
+    const response = await api.get('/chats');
+    return response.data;
+  },
+  sendMessage: async (tenantId, sender, text, attachment, attachmentType) => {
+    const response = await api.post('/chats/message', { tenantId, sender, text, attachment, attachmentType });
+    return response.data;
+  },
+  markSeen: async (tenantId, sender) => {
+    const response = await api.post(`/chats/${tenantId}/seen`, { sender });
+    return response.data;
+  }
+};
+
+export const commentService = {
+  getComments: async () => {
+    const response = await api.get('/comments');
+    return response.data;
+  },
+  createTicket: async (tenantId, title, category, message) => {
+    const response = await api.post('/comments', { tenantId, title, category, message });
+    return response.data;
+  },
+  replyToTicket: async (ticketId, sender, message, name) => {
+    const response = await api.post(`/comments/${ticketId}/reply`, { sender, message, name });
+    return response.data;
+  }
+};
+
+export const notificationService = {
+  getNotifications: async () => {
+    const response = await api.get('/notifications');
+    return response.data;
+  },
+  markAllRead: async () => {
+    const response = await api.post('/notifications/mark-all-read');
+    return response.data;
+  }
+};
+
+export default api;
