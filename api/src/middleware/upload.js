@@ -4,9 +4,19 @@ const fs = require('fs');
 const crypto = require('crypto');
 const uuidv4 = () => crypto.randomUUID();
 
-const UPLOAD_DIR = path.join(__dirname, '../../private_uploads');
+const os = require('os');
+
+// Use OS temp directory in serverless environments like Vercel where the app directory is read-only
+const UPLOAD_DIR = process.env.VERCEL
+  ? path.join(os.tmpdir(), 'private_uploads')
+  : path.join(__dirname, '../../private_uploads');
+
 if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  try {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  } catch (err) {
+    console.warn('⚠️ Could not create upload directory:', err.message);
+  }
 }
 
 // Set up secure disk storage
