@@ -7,7 +7,7 @@ const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:post
 
 const pool = new Pool({
   connectionString: connectionString,
-  max: 10,
+  max: process.env.VERCEL ? 2 : 10, // Limit connections on Vercel to prevent exhaustion
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
   ssl: connectionString.includes('supabase') || connectionString.includes('supabase.co')
