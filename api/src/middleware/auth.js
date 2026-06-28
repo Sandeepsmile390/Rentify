@@ -86,6 +86,9 @@ async function handleSessionRefresh(req, res, next) {
       sameSite: isProd ? 'none' : 'lax',
       maxAge: 15 * 60 * 1000 // 15 mins
     });
+    
+    // Set custom header so javascript clients can read and save the new token
+    res.setHeader('x-new-access-token', newAccessToken);
 
     // Provide token to downstream
     req.user = { id: user.id, email: user.email, phone: user.phone, role: user.role };

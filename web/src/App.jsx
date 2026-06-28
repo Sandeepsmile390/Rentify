@@ -158,20 +158,40 @@ export default function App() {
   
   // Secure fetch helper incorporating SameSite cookies & auto-stringify
   const apiFetch = async (endpoint, options = {}) => {
+    const token = localStorage.getItem('accessToken');
+    const refreshToken = localStorage.getItem('refreshToken');
+
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    };
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    if (refreshToken) {
+      headers['x-refresh-token'] = refreshToken;
+    }
+
     const mergedOptions = {
       ...options,
       credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(options.headers || {})
-      }
+      headers
     };
     if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
       mergedOptions.body = JSON.stringify(options.body);
     }
     const response = await fetch(endpoint, mergedOptions);
+
+    const newAccessToken = response.headers.get('x-new-access-token');
+    if (newAccessToken) {
+      localStorage.setItem('accessToken', newAccessToken);
+    }
+
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
         setIsLogged(false);
       }
       const errRes = await response.json().catch(() => ({}));

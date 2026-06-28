@@ -54,7 +54,8 @@ app.use(cors({
     
     return callback(null, false);
   },
-  credentials: true
+  credentials: true,
+  exposedHeaders: ['x-new-access-token']
 }));
 
 // 2. Helmet headers integration (Clickjacking & CSP)

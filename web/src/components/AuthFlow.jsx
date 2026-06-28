@@ -97,6 +97,11 @@ export default function AuthFlow({ onLoginSuccess, apiFetch, API_BASE }) {
       });
       const data = await res.json();
 
+      if (data.accessToken) {
+        localStorage.setItem('accessToken', data.accessToken);
+        localStorage.setItem('refreshToken', data.refreshToken);
+      }
+
       if (data.isFirstLogin) {
         setTempUserPayload(data);
         setScreen('first-login');
@@ -131,6 +136,11 @@ export default function AuthFlow({ onLoginSuccess, apiFetch, API_BASE }) {
         }
       });
       const data = await res.json();
+
+      if (data.accessToken) {
+        localStorage.setItem('accessToken', data.accessToken);
+        localStorage.setItem('refreshToken', data.refreshToken);
+      }
 
       if (data.isFirstLogin) {
         setTempUserPayload(data);
@@ -188,6 +198,10 @@ export default function AuthFlow({ onLoginSuccess, apiFetch, API_BASE }) {
       setSuccessMsg('Password updated successfully! Redirecting...');
       setTimeout(() => {
         if (tempUserPayload) {
+          if (tempUserPayload.accessToken) {
+            localStorage.setItem('accessToken', tempUserPayload.accessToken);
+            localStorage.setItem('refreshToken', tempUserPayload.refreshToken);
+          }
           onLoginSuccess(tempUserPayload.user, tempUserPayload.user.role);
         }
       }, 1500);
