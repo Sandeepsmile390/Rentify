@@ -1529,8 +1529,12 @@ app.use((err, req, res, next) => {
   // Log full trace to server logs solely
   console.error('💥 Server Stack Trace:', err.stack || err.message);
   
-  // Return generalized user alert to block SQL/Stack leaks
-  res.status(500).json({ message: 'Something went wrong.' });
+  // Return actual error temporarily for debugging Vercel deployment issues
+  res.status(500).json({ 
+    message: 'Something went wrong.',
+    error: err.message,
+    stack: err.stack
+  });
 });
 
 // Launch server listener
