@@ -1,4 +1,4 @@
-# 🏠 RentFlow — Smart Property & Rent Management System
+# 🏠 Rentify — Smart Property & Rent Management System
 
 A production-grade, full-stack rent management system for modern landlords and tenants.
 
