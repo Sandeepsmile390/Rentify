@@ -1529,10 +1529,13 @@ app.use((err, req, res, next) => {
   // Log full trace to server logs solely
   console.error('💥 Server Stack Trace:', err.stack || err.message);
   
-  // Return actual error temporarily for debugging Vercel deployment issues
+  // Return actual error temporarily with all postgres error fields for diagnostic
   res.status(500).json({ 
     message: 'Something went wrong.',
     error: err.message,
+    code: err.code,
+    detail: err.detail,
+    cause: err.cause ? err.cause.message : null,
     stack: err.stack
   });
 });
