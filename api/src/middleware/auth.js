@@ -78,11 +78,12 @@ async function handleSessionRefresh(req, res, next) {
       { expiresIn: '15m' }
     );
 
-    // Set new cookie on web client
+    // Set new cookie on web client (Supports cross-site calls to live API from local/deployed frontend)
+    const isProd = process.env.NODE_ENV === 'production' || (req.headers.host && req.headers.host.includes('vercel.app'));
     res.cookie('accessToken', newAccessToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
       maxAge: 15 * 60 * 1000 // 15 mins
     });
 
