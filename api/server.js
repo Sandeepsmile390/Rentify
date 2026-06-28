@@ -158,6 +158,25 @@ async function createSession(userId, req, tokenHash) {
   }
 }
 
+// Root endpoints to confirm API status
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    message: 'Welcome to Rentify API Secure Server',
+    version: '1.0.0',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/api', (req, res) => {
+  res.json({
+    status: 'online',
+    message: 'Welcome to Rentify API Secure Server',
+    version: '1.0.0',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // ==============================================================
 // AUTHENTICATION APIs
 // ==============================================================
