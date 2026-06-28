@@ -7,7 +7,8 @@ const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const sanitizeHtml = require('sanitize-html');
-const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
+const uuidv4 = () => crypto.randomUUID();
 const rateLimit = require('express-rate-limit');
 
 // Database client & schema

@@ -9,7 +9,10 @@ const pool = new Pool({
   connectionString: connectionString,
   max: 10,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 5000,
+  ssl: connectionString.includes('supabase') || connectionString.includes('supabase.co')
+    ? { rejectUnauthorized: false }
+    : false,
 });
 
 pool.query('SELECT NOW()', (err, res) => {
