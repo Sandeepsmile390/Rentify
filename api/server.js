@@ -39,7 +39,21 @@ const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'rentify_refresh_to
 
 // 1. CORS Setup (Support web cookie transfer)
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  origin: (origin, callback) => {
+    // Allow mobile apps, curl, postman (no origin header)
+    if (!origin) return callback(null, true);
+    
+    // Allow localhost and any Vercel deployment subdomain
+    if (
+      origin.startsWith('http://localhost:') || 
+      origin.startsWith('http://127.0.0.1:') ||
+      origin.endsWith('.vercel.app')
+    ) {
+      return callback(null, true);
+    }
+    
+    return callback(null, false);
+  },
   credentials: true
 }));
 
