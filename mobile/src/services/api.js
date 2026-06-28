@@ -1,9 +1,9 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
-// In React Native development (Expo), localhost points to the emulator.
-// Change to your machine's IP (e.g. 192.168.x.x) for physical device testing.
-const API_BASE_URL = 'http://localhost:5000/api';
+// API base URL — reads from mobile/.env (EXPO_PUBLIC_API_URL) with fallback for local dev.
+// For physical device testing: change the IP in .env to your machine's LAN IP (e.g. 192.168.1.x)
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,

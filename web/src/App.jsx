@@ -11,7 +11,8 @@ import AuthFlow, { ActiveSessions } from './components/AuthFlow';
 import { ShieldCheck } from 'lucide-react';
 
 // API Central URL
-const API_BASE = 'http://localhost:5000/api';
+// API base URL — reads from web/.env (VITE_API_URL) with fallback for local dev
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 export default function App() {
   // Theme state
