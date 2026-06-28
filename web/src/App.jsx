@@ -678,39 +678,7 @@ export default function App() {
         </div>
       )}
 
-      {/* DEV TOOLBAR BAR */}
-      <div className="dev-toolbar">
-        <div className="dev-logo">
-          <Logo size={24} />
-          <span style={{ fontSize: '1rem', color: '#FFF', fontWeight: 800 }}>Rentify Studio</span>
-        </div>
-        <div className="dev-controls">
-          <div style={{ display: 'flex', gap: '8px', background: 'rgba(255,255,255,0.05)', padding: '4px', borderRadius: '10px' }}>
-            <button 
-              className={`dev-btn ${role === 'owner' ? 'active' : ''}`}
-              onClick={() => { setRole('owner'); setIsLogged(true); }}
-            >
-              Owner View
-            </button>
-            <button 
-              className={`dev-btn ${role === 'tenant' ? 'active' : ''}`}
-              onClick={() => { setRole('tenant'); setSimPhone('9876543210'); setSimIsLogged(true); }}
-            >
-              Tenant View
-            </button>
-          </div>
 
-          <button className="dev-btn" onClick={() => setShowSimulator(!showSimulator)}>
-            <Smartphone size={16} />
-            {showSimulator ? "Hide Simulator" : "Show Simulator"}
-          </button>
-
-          <button className="dev-btn" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
-            {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
-            {theme === 'light' ? "Dark Mode" : "Light Mode"}
-          </button>
-        </div>
-      </div>
 
       {/* SECURE LOGIN PAGE */}
       {!isLogged ? (
