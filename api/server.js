@@ -60,6 +60,7 @@ app.use(cors({
 // 2. Helmet headers integration (Clickjacking & CSP)
 app.use(helmet({
   contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false, // bypass dev tools CSP if local
+  crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
 // 3. Auto HTTP -> HTTPS Redirection in production
