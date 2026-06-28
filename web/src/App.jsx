@@ -22,6 +22,7 @@ export default function App() {
   const [activeView, setActiveView] = useState('dashboard');
   const [role, setRole] = useState('owner'); // 'owner' or 'tenant' (influences mobile sim and login)
   const [isLogged, setIsLogged] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
   const [loginRole, setLoginRole] = useState('owner');
   const [loginInput, setLoginInput] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -106,6 +107,39 @@ export default function App() {
   const [ownerChatText, setOwnerChatText] = useState('');
   const [activeCommentId, setActiveCommentId] = useState(null);
   const [ownerCommentText, setOwnerCommentText] = useState('');
+
+  const decodeJWT = (token) => {
+    try {
+      const base64Url = token.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+      }).join(''));
+      return JSON.parse(jsonPayload);
+    } catch (e) {
+      return null;
+    }
+  };
+
+  // Auto login on mount if token is found
+  useEffect(() => {
+    const token = localStorage.getItem('accessToken');
+    if (token) {
+      const decoded = decodeJWT(token);
+      if (decoded && decoded.exp * 1000 > Date.now()) {
+        setRole(decoded.role);
+        setCurrentUser(decoded);
+        setIsLogged(true);
+        if (decoded.role === 'tenant') {
+          setSimPhone(decoded.phone);
+          setSimIsLogged(true);
+        }
+      } else {
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
+      }
+    }
+  }, []);
 
   // Apply Theme
   useEffect(() => {
@@ -274,6 +308,27 @@ export default function App() {
       triggerToast(`🏢 Created property: ${data.name}`);
     } catch (error) {
       alert("Failed to add property");
+    }
+  };
+
+  // Delete Property
+  const handleDeleteProperty = async (propertyId) => {
+    if (!window.confirm("Are you sure you want to permanently delete this property? This action cannot be undone.")) {
+      return;
+    }
+    try {
+      const response = await apiFetch(`${API_BASE}/properties/${propertyId}`, {
+        method: 'DELETE'
+      });
+      const data = await response.json();
+      if (data.success) {
+        setProperties(properties.filter(p => p.id !== propertyId));
+        triggerToast("🏢 Property deleted successfully.");
+      } else {
+        alert(data.message || "Failed to delete property");
+      }
+    } catch (error) {
+      alert(error.message || "Failed to delete property");
     }
   };
 
@@ -509,8 +564,13 @@ export default function App() {
   
   const handleLoginSuccess = (user, loggedRole) => {
     setRole(loggedRole);
+    setCurrentUser(user);
     setIsLogged(true);
     triggerToast("🔑 Logged in successfully!");
+    if (loggedRole === 'tenant') {
+      setSimPhone(user.phone);
+      setSimIsLogged(true);
+    }
     fetchAllData();
   };
 
@@ -518,7 +578,12 @@ export default function App() {
     try {
       await apiFetch(`${API_BASE}/auth/logout`, { method: 'POST' });
     } catch (e) {}
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
     setIsLogged(false);
+    setCurrentUser(null);
+    setSimIsLogged(false);
+    setSimTenantData(null);
     triggerToast("👋 Logged out securely.");
   };
 
@@ -1028,7 +1093,26 @@ export default function App() {
                             <span className="property-type">{p.type} Complex</span>
                             <h3>{p.name}</h3>
                           </div>
-                          <Building2 size={24} style={{ color: 'var(--text-muted)' }} />
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <Building2 size={24} style={{ color: 'var(--text-muted)' }} />
+                            <button 
+                              onClick={() => handleDeleteProperty(p.id)} 
+                              style={{ 
+                                background: 'transparent', 
+                                border: 'none', 
+                                color: 'var(--color-danger)', 
+                                cursor: 'pointer', 
+                                padding: '4px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                transition: 'transform 0.15s ease'
+                              }}
+                              className="delete-property-btn"
+                              title="Delete Property"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
                         </div>
 
                         <div className="occupancy-meter">
@@ -1108,6 +1192,28 @@ export default function App() {
                             >
                               {t.status}
                             </span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handlePermanentDeleteTenant(t.id);
+                              }}
+                              style={{
+                                position: 'absolute',
+                                top: '60px',
+                                right: '24px',
+                                background: 'transparent',
+                                border: 'none',
+                                color: 'var(--color-danger)',
+                                cursor: 'pointer',
+                                padding: '4px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                zIndex: 5
+                              }}
+                              title="Delete Tenant"
+                            >
+                              <Trash2 size={16} />
+                            </button>
                           </div>
 
                           <div className="tenant-card-details">
@@ -1174,15 +1280,14 @@ export default function App() {
                     </div>
 
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      {selectedTenant.status !== 'Left' ? (
-                        <button className="btn-primary" style={{ background: 'var(--color-danger)' }} onClick={() => setShowMoveOutModal(true)}>
+                      {selectedTenant.status !== 'Left' && (
+                        <button className="btn-primary" style={{ background: 'var(--color-warning)', color: '#1E1B4B' }} onClick={() => setShowMoveOutModal(true)}>
                           <UserMinus size={16} /> Move Out Tenant
                         </button>
-                      ) : (
-                        <button className="btn-primary" style={{ background: 'var(--color-danger)' }} onClick={() => handlePermanentDeleteTenant(selectedTenant.id)}>
-                          <Trash2 size={16} /> Delete Permanently
-                        </button>
                       )}
+                      <button className="btn-primary" style={{ background: 'var(--color-danger)' }} onClick={() => handlePermanentDeleteTenant(selectedTenant.id)}>
+                        <Trash2 size={16} /> Delete Permanently
+                      </button>
                     </div>
                   </div>
 
@@ -1787,20 +1892,272 @@ export default function App() {
           </div>
         </div>
       ) : (
-        // TENANT VIEW FULL PREVIEW (IF SIMULATOR DEACTIVATED, USER CAN BROWSE MOBILE RENDER FULL SCREEN)
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '40px', background: 'var(--bg-app)', minHeight: 'calc(100vh - 53px)' }}>
-          <div style={{ border: '1px solid var(--border-color)', width: '375px', height: '700px', background: 'var(--bg-card)', borderRadius: '30px', boxShadow: 'var(--shadow-premium)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ background: 'var(--bg-app)', padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontWeight: 800 }}>Rentify Mobile App</span>
-              <span className="badge success">Demo Active</span>
+        // FULL INTERACTIVE TENANT WEB PORTAL (DESKTOP VERSION)
+        <div style={{ padding: '40px', background: 'var(--bg-app)', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+          
+          {/* Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px', borderBottom: '1px solid var(--border-color)', paddingBottom: '20px' }}>
+            <div>
+              <span className="badge success" style={{ marginBottom: '8px', display: 'inline-block' }}>Tenant Dashboard</span>
+              <h1 style={{ fontSize: '2.4rem', fontWeight: 800, marginBottom: '6px', letterSpacing: '-0.03em' }}>Welcome back, {simTenantData?.name || 'Loading profile...'}</h1>
+              <p style={{ color: 'var(--text-secondary)' }}>
+                📍 Room {simTenantData?.roomNumber} ({simTenantData?.roomType}) • {simTenantData?.propertyName} • Checked-in: {simTenantData?.moveInDate}
+              </p>
             </div>
-            
-            {/* Embedded Mobile rendering */}
-            <div style={{ flexGrow: 1, overflowY: 'auto', padding: '20px' }}>
-              <h3>Welcome, Ravi!</h3>
-              <p style={{ color: 'var(--text-secondary)' }}>Room 101, House A</p>
-            </div>
+            <button className="btn-primary" style={{ background: 'var(--color-danger)', borderRadius: '24px', padding: '12px 24px' }} onClick={handleWebLogout}>
+              Logout Portal
+            </button>
           </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1.2fr', gap: '32px', flexGrow: 1 }}>
+            
+            {/* LEFT COLUMN: DUE, TICKETS, BILLS */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+              
+              {/* Due Summary Card */}
+              {simLatestBill ? (
+                <div className="card" style={{ padding: '24px', background: 'linear-gradient(135deg, #1E1B4B 0%, #312E81 100%)', color: 'white', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <span style={{ fontSize: '0.85rem', color: '#94A3B8', fontWeight: 600 }}>OUTSTANDING BALANCE ({simLatestBill.billingMonth})</span>
+                      <h2 style={{ fontSize: '2.8rem', fontWeight: 900, color: '#FFF' }}>₹{simLatestBill.pendingAmount}</h2>
+                    </div>
+                    <span className="badge" style={{ background: simLatestBill.status === 'Paid' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)', color: simLatestBill.status === 'Paid' ? '#4ADE80' : '#FCA5A5' }}>
+                      {simLatestBill.status}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ height: '8px', background: '#334155', borderRadius: '4px', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', background: 'var(--color-primary)', width: `${(simLatestBill.paidAmount / simLatestBill.totalAmount) * 100}%` }}></div>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: '#94A3B8' }}>
+                      <span>{Math.round((simLatestBill.paidAmount / simLatestBill.totalAmount) * 100)}% Paid (₹{simLatestBill.paidAmount} settled)</span>
+                      <span>Total Invoice: ₹{simLatestBill.totalAmount}</span>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '16px', marginTop: '8px' }}>
+                    <span style={{ fontSize: '0.85rem', color: '#94A3B8' }}>Payment Due by: <strong>{simLatestBill.dueDate}</strong></span>
+                    {simLatestBill.pendingAmount > 0 && (
+                      <button className="btn-primary" style={{ padding: '12px 24px', borderRadius: '24px' }} onClick={handleSimPayBill}>
+                        💳 Settle UPI Payment
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="card" style={{ padding: '24px', textAlign: 'center' }}>
+                  <h4>No pending invoices for this month! All settled. 🎉</h4>
+                </div>
+              )}
+
+              {/* Invoices List */}
+              <div className="card" style={{ padding: '24px' }}>
+                <h3 style={{ marginBottom: '16px' }}>Invoice & Payments Ledger</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {bills.filter(b => b.tenantId === simTenantData?.id).map(b => (
+                    <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid var(--border-color)', padding: '16px', borderRadius: '16px' }}>
+                      <div>
+                        <h4 style={{ fontSize: '1rem', marginBottom: '4px' }}>{b.billingMonth} Bill</h4>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                          Rent: ₹{b.rentAmount} • Elec: ₹{b.electricityAmount} ({b.electricityUnits} u) • Water: ₹{b.waterCharges}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <span style={{ fontWeight: 700 }}>₹{b.totalAmount}</span>
+                        <span className={`badge ${b.status === 'Paid' ? 'success' : 'warning'}`}>{b.status}</span>
+                        {b.paidAmount > 0 && (
+                          <button className="dev-btn" style={{ fontSize: '0.75rem', padding: '6px 12px' }} onClick={() => alert("Downloaded PDF Receipt for " + b.billingMonth)}>
+                            Download Receipt
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {bills.filter(b => b.tenantId === simTenantData?.id).length === 0 && (
+                    <p style={{ color: 'var(--text-muted)', textAlign: 'center' }}>No billing history found.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Maintenance Tickets & Concerns */}
+              <div className="card" style={{ padding: '24px' }}>
+                <h3 style={{ marginBottom: '16px' }}>Maintenance Concerns & Tickets</h3>
+                
+                {/* Form to submit concern */}
+                <form onSubmit={handleSimSubmitComment} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px', borderBottom: '1px solid var(--border-color)', paddingBottom: '24px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Category</label>
+                    <select className="input-field" value={simCommentCategory} onChange={(e) => setSimCommentCategory(e.target.value)}>
+                      <option value="Maintenance">General Maintenance</option>
+                      <option value="Plumbing">Plumbing Leakage</option>
+                      <option value="Electrical">Electric/Power Outage</option>
+                    </select>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Ticket Title</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. Broken sink pipe" 
+                      className="input-field" 
+                      value={simNewCommentTitle}
+                      onChange={(e) => setSimNewCommentTitle(e.target.value)}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', gridColumn: 'span 2' }}>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Issue Description</label>
+                    <textarea 
+                      placeholder="Describe the issue in detail so the owner can review..." 
+                      className="input-field" 
+                      style={{ height: '80px' }}
+                      value={simNewCommentBody}
+                      onChange={(e) => setSimNewCommentBody(e.target.value)}
+                    />
+                    <button type="submit" className="btn-primary" style={{ alignSelf: 'flex-end', padding: '10px 20px', borderRadius: '24px', fontSize: '0.9rem' }}>
+                      Log Concern Ticket
+                    </button>
+                  </div>
+                </form>
+
+                {/* List of active tickets */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {comments.filter(c => c.tenantId === simTenantData?.id).map(c => (
+                    <div key={c.id} style={{ border: '1px solid var(--border-color)', padding: '16px', borderRadius: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                        <div>
+                          <span className="badge" style={{ marginRight: '8px' }}>{c.category}</span>
+                          <strong style={{ fontSize: '1.05rem' }}>{c.title}</strong>
+                        </div>
+                        <span className={`badge ${c.status === 'Resolved' ? 'success' : 'warning'}`}>{c.status}</span>
+                      </div>
+                      
+                      {/* Ticket replies list */}
+                      <div style={{ background: 'var(--bg-app)', padding: '12px', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
+                        {c.replies?.map(r => (
+                          <div key={r.id} style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                              <strong>{r.sender === 'tenant' ? 'You' : 'Landlord'}</strong>
+                              <span>{new Date(r.createdAt).toLocaleString()}</span>
+                            </div>
+                            <p style={{ fontSize: '0.85rem' }}>{r.message}</p>
+                          </div>
+                        ))}
+                        
+                        {/* Reply input for ticket */}
+                        <div style={{ marginTop: '8px' }}>
+                          <input 
+                            type="text" 
+                            placeholder="Type a reply to landlord..." 
+                            className="input-field" 
+                            style={{ padding: '8px 12px', fontSize: '0.8rem', borderRadius: '16px' }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                handleSimCommentReply(c.id, e.target.value);
+                                e.target.value = '';
+                              }
+                            }}
+                          />
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', marginTop: '4px', marginLeft: '6px' }}>Press Enter to send reply</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {comments.filter(c => c.tenantId === simTenantData?.id).length === 0 && (
+                    <p style={{ color: 'var(--text-muted)', textAlign: 'center' }}>No active concern tickets logged.</p>
+                  )}
+                </div>
+
+              </div>
+
+            </div>
+
+            {/* RIGHT COLUMN: RENTAL INFO & CHAT */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+              
+              {/* Rental Contract details */}
+              {simTenantData && (
+                <div className="card" style={{ padding: '24px' }}>
+                  <h3 style={{ marginBottom: '16px' }}>Rental Contract Details</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '0.9rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Aadhaar Number</span>
+                      <span style={{ fontWeight: 600 }}>{simTenantData.aadhaar} (Verified ✅)</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>PAN Card Status</span>
+                      <span style={{ fontWeight: 600 }}>{simTenantData.pan} (Verified ✅)</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Security Deposit</span>
+                      <span style={{ fontWeight: 600 }}>₹{simTenantData.securityDeposit}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Monthly Rent Cycle</span>
+                      <span style={{ fontWeight: 600 }}>₹{simTenantData.rentAmount}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Electricity Unit Rate</span>
+                      <span style={{ fontWeight: 600 }}>₹{simTenantData.electricityRate}/unit</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Water Fix Charges</span>
+                      <span style={{ fontWeight: 600 }}>₹{simTenantData.waterCharges}/mo</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Agreement Term</span>
+                      <span style={{ fontWeight: 600 }}>{simTenantData.agreementDuration} Months</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Chat Panel */}
+              <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', height: '550px' }}>
+                <h3 style={{ marginBottom: '16px' }}>Chat with Landlord</h3>
+                
+                {/* Messages body */}
+                <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', padding: '12px', background: 'var(--bg-app)', borderRadius: '16px', marginBottom: '16px' }}>
+                  {simChatMessages.map(m => (
+                    <div key={m.id} style={{
+                      alignSelf: m.sender === 'tenant' ? 'flex-end' : 'flex-start',
+                      background: m.sender === 'tenant' ? 'var(--color-primary)' : 'var(--bg-card)',
+                      color: m.sender === 'tenant' ? 'white' : 'var(--text-primary)',
+                      padding: '10px 14px',
+                      borderRadius: '16px',
+                      maxWidth: '85%',
+                      fontSize: '0.85rem',
+                      border: m.sender !== 'tenant' ? '1px solid var(--border-color)' : 'none',
+                      boxShadow: 'var(--shadow-premium)'
+                    }}>
+                      <p>{m.text}</p>
+                    </div>
+                  ))}
+                  {simChatMessages.length === 0 && (
+                    <p style={{ color: 'var(--text-muted)', textAlign: 'center', marginTop: '40px' }}>Send a message to start chatting with your landlord.</p>
+                  )}
+                </div>
+
+                {/* Input form */}
+                <form onSubmit={handleSimSendChat} style={{ display: 'flex', gap: '8px' }}>
+                  <input 
+                    type="text" 
+                    placeholder="Type a message to landlord..." 
+                    className="input-field" 
+                    style={{ borderRadius: '24px', padding: '10px 18px', flexGrow: 1 }}
+                    value={simChatText}
+                    onChange={(e) => setSimChatText(e.target.value)}
+                  />
+                  <button type="submit" className="btn-primary" style={{ padding: '10px 14px', borderRadius: '50%' }}>
+                    <Send size={16} />
+                  </button>
+                </form>
+              </div>
+
+            </div>
+
+          </div>
+
         </div>
       ))}
 

@@ -423,6 +423,32 @@ app.post('/api/properties', authenticateJWT, authorizeRoles('owner'), async (req
   }
 });
 
+app.delete('/api/properties/:id', authenticateJWT, authorizeRoles('owner'), async (req, res, next) => {
+  try {
+    const propertyId = req.params.id;
+
+    // 1. Check if property exists
+    const propArr = await db.select().from(properties).where(eq(properties.id, propertyId));
+    if (propArr.length === 0) return res.status(404).json({ message: 'Property not found.' });
+
+    // 2. Check if there are any associated tenants (active or archived)
+    const tenantArr = await db.select().from(tenants).where(eq(tenants.propertyId, propertyId));
+    if (tenantArr.length > 0) {
+      return res.status(400).json({ 
+        message: 'Cannot delete property. There are tenants associated with this property. Please remove or move-out those tenants first.' 
+      });
+    }
+
+    // 3. Delete property
+    await db.delete(properties).where(eq(properties.id, propertyId));
+    await logAuditAction(req, 'DELETE_PROPERTY', propArr[0], null);
+
+    res.json({ success: true, message: 'Property deleted successfully.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // ==============================================================
 // TENANT MANAGEMENT APIs (RBAC + Ownership Checks)
 // ==============================================================
@@ -668,6 +694,22 @@ app.delete('/api/tenants/:id', authenticateJWT, authorizeRoles('owner'), async (
     const tenantArr = await db.select().from(tenants).where(eq(tenants.id, tenantId));
     if (tenantArr.length === 0) return res.status(404).json({ message: 'Tenant not found.' });
     const tenant = tenantArr[0];
+
+    // Update occupied rooms if tenant was active
+    if (tenant.status === 'Active') {
+      const propArr = await db.select().from(properties).where(eq(properties.id, tenant.propertyId));
+      if (propArr.length > 0) {
+        const prop = propArr[0];
+        const newOccupied = Math.max(0, prop.occupied - 1);
+        await db.update(properties)
+          .set({
+            occupied: newOccupied,
+            vacant: prop.totalRooms - newOccupied,
+            monthlyRevenue: Math.max(0, prop.monthlyRevenue - tenant.rentAmount)
+          })
+          .where(eq(properties.id, tenant.propertyId));
+      }
+    }
 
     // Deleting matching records in DB
     await db.delete(bills).where(eq(bills.tenantId, tenantId));
