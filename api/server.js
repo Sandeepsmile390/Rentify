@@ -32,6 +32,7 @@ const { upload, validateFileSize, UPLOAD_DIR } = require('./src/middleware/uploa
 require('dotenv').config();
 
 const app = express();
+app.set('trust proxy', 1); // Trust Vercel's proxy for express-rate-limit
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'rentify_access_token_secret_99881122';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'rentify_refresh_token_secret_22118899';
@@ -248,18 +249,19 @@ app.post('/api/auth/login', loginLimiter, async (req, res, next) => {
     // Create session tracking record
     await createSession(user.id, req, refreshToken);
 
-    // Web Client Cookie configuration (HttpOnly, Secure, SameSite Strict)
+    // Web Client Cookie configuration (Supports cross-site calls to live API from local/deployed frontend)
+    const isProd = process.env.NODE_ENV === 'production' || (req.headers.host && req.headers.host.includes('vercel.app'));
     res.cookie('accessToken', accessToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
       maxAge: 15 * 60 * 1000 // 15 minutes
     });
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
     });
 
@@ -1313,8 +1315,9 @@ app.post('/api/auth/tenant-login', loginLimiter, async (req, res, next) => {
 
     await createSession(user.id, req, refreshToken);
 
-    res.cookie('accessToken', accessToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 15 * 60 * 1000 });
-    res.cookie('refreshToken', refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 30 * 24 * 60 * 60 * 1000 });
+    const isProd = process.env.NODE_ENV === 'production' || (req.headers.host && req.headers.host.includes('vercel.app'));
+    res.cookie('accessToken', accessToken, { httpOnly: true, secure: isProd, sameSite: isProd ? 'none' : 'lax', maxAge: 15 * 60 * 1000 });
+    res.cookie('refreshToken', refreshToken, { httpOnly: true, secure: isProd, sameSite: isProd ? 'none' : 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
 
     req.user = { id: user.id, role: user.role };
     await logAuditAction(req, 'TENANT_LOGIN_SUCCESS', null, { tenantLoginId });
