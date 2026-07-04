@@ -27,7 +27,25 @@ const properties = pgTable('properties', {
   occupied: integer('occupied').default(0),
   vacant: integer('vacant').default(0),
   monthlyRevenue: integer('monthly_revenue').default(0),
-  ownerId: varchar('owner_id', { length: 256 }).default('owner-admin')
+  ownerId: varchar('owner_id', { length: 256 }).default('owner-admin'),
+  address: varchar('address', { length: 512 }),
+  description: text('description'),
+  floors: integer('floors').default(1),
+  photos: jsonb('photos').default([])
+});
+
+// 2b. Rooms Table
+const rooms = pgTable('rooms', {
+  id: varchar('id', { length: 256 }).primaryKey(),
+  propertyId: varchar('property_id', { length: 256 }).references(() => properties.id),
+  number: varchar('number', { length: 100 }).notNull(),
+  floor: integer('floor').default(1),
+  size: varchar('size', { length: 100 }).default('120 sq ft'),
+  type: varchar('type', { length: 100 }).default('Room'), // Room, Flat, Shop, PG Bed
+  rent: integer('rent').default(0),
+  electricityRate: integer('electricity_rate').default(6),
+  waterCharges: integer('water_charges').default(0),
+  status: varchar('status', { length: 50 }).default('Available'), // Available, Occupied, Reserved, Under Maintenance
 });
 
 // 3. Tenants Table
@@ -61,6 +79,13 @@ const tenants = pgTable('tenants', {
   status: varchar('status', { length: 50 }).default('Active'), // 'Active', 'Leaving', 'Left'
   photo: varchar('photo', { length: 512 }),
   documents: jsonb('documents').default({}), // Profile, Aadhaar front/back, PAN, rental agreement
+  gender: varchar('gender', { length: 50 }),
+  dob: varchar('dob', { length: 100 }),
+  companyCollege: varchar('company_college', { length: 256 }),
+  drivingLicenseEncrypted: text('driving_license_encrypted'),
+  vehicleDetails: varchar('vehicle_details', { length: 256 }),
+  notes: text('notes'),
+  roomId: varchar('room_id', { length: 256 }).references(() => rooms.id),
   leftDate: varchar('left_date', { length: 100 }),
   archiveDate: varchar('archive_date', { length: 100 })
 });
@@ -87,7 +112,10 @@ const bills = pgTable('bills', {
   pendingAmount: integer('pending_amount').default(0),
   status: varchar('status', { length: 50 }).default('Unpaid'), // 'Paid', 'Partial Paid', 'Unpaid'
   dueDate: varchar('due_date', { length: 100 }),
-  payments: jsonb('payments').default([]) // Array of payment receipts
+  payments: jsonb('payments').default([]), // Array of payment receipts
+  prevMeterReading: integer('prev_meter_reading').default(0),
+  currMeterReading: integer('curr_meter_reading').default(0),
+  meterPhoto: varchar('meter_photo', { length: 512 })
 });
 
 // 5. Comments Table
@@ -155,14 +183,26 @@ const sessions = pgTable('sessions', {
   createdAt: varchar('created_at', { length: 100 })
 });
 
+// 10. Announcements Table
+const announcements = pgTable('announcements', {
+  id: varchar('id', { length: 256 }).primaryKey(),
+  title: varchar('title', { length: 256 }).notNull(),
+  message: text('message').notNull(),
+  category: varchar('category', { length: 100 }).default('General'), // Water Shutdown, Power Maintenance, Rent Reminder, Emergency, General
+  createdAt: varchar('created_at', { length: 100 }),
+  ownerId: varchar('owner_id', { length: 256 }).default('owner-admin')
+});
+
 module.exports = {
   users,
   properties,
+  rooms,
   tenants,
   bills,
   comments,
   chats,
   notifications,
   auditLogs,
-  sessions
+  sessions,
+  announcements
 };

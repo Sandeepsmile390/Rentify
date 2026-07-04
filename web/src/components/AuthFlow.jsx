@@ -3,6 +3,7 @@ import {
   Building2, User, KeyRound, Eye, EyeOff, ArrowLeft, 
   Check, X, ShieldAlert, Lock, Info, RefreshCw, LogOut, Laptop, Smartphone, Globe
 } from 'lucide-react';
+import Logo from './Logo';
 
 // Live strength calculator helper
 const calculatePasswordStrength = (password) => {
@@ -43,6 +44,13 @@ export default function AuthFlow({ onLoginSuccess, apiFetch, API_BASE }) {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotStep, setForgotStep] = useState(1);
+  const [forgotInput, setForgotInput] = useState('');
+  const [forgotUserId, setForgotUserId] = useState('');
+  const [forgotRecoveryCode, setForgotRecoveryCode] = useState('');
+  const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
+  const [forgotSimulatedOTP, setForgotSimulatedOTP] = useState('');
   const [tempUserPayload, setTempUserPayload] = useState(null); // Saved after login before password change
 
   // Automatically direct user to login screen if role is saved
@@ -67,6 +75,90 @@ export default function AuthFlow({ onLoginSuccess, apiFetch, API_BASE }) {
     setPassword('');
     setLoginInput('');
     setTenantLoginId('');
+  };
+
+  const handleRequestRecovery = async (e) => {
+    e.preventDefault();
+    if (!forgotInput) {
+      alert("Please fill in the required field.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const payload = { role: loginRole };
+      if (loginRole === 'owner') {
+        payload.loginInput = forgotInput;
+      } else {
+        payload.tenantLoginId = forgotInput;
+      }
+
+      const res = await apiFetch(`${API_BASE}/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      
+      if (res.ok) {
+        setForgotUserId(data.userId);
+        setForgotSimulatedOTP(data.recoveryCode);
+        setForgotStep(2);
+        alert(`🔑 Simulated Verification OTP Code: ${data.recoveryCode}\n(Please write this down to verify in next step!)`);
+      } else {
+        alert(data.message || "Failed to locate account.");
+      }
+    } catch (err) {
+      alert("Error: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetPasswordVerify = async (e) => {
+    e.preventDefault();
+    if (!forgotRecoveryCode || !forgotNewPassword || !forgotConfirmPassword) {
+      alert("Please fill all verification fields.");
+      return;
+    }
+    if (forgotNewPassword !== forgotConfirmPassword) {
+      alert("Passwords do not match.");
+      return;
+    }
+    if (forgotNewPassword.length < 6) {
+      alert("Password must be at least 6 characters long.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await apiFetch(`${API_BASE}/auth/reset-password-verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: forgotUserId,
+          recoveryCode: forgotRecoveryCode,
+          newPassword: forgotNewPassword
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert("🎉 Password reset successfully! Please login with your new password.");
+        setShowForgotModal(false);
+        setForgotStep(1);
+        setForgotInput('');
+        setForgotRecoveryCode('');
+        setForgotNewPassword('');
+        setForgotConfirmPassword('');
+        setForgotUserId('');
+        setForgotSimulatedOTP('');
+      } else {
+        alert(data.message || "Password reset verification failed.");
+      }
+    } catch (err) {
+      alert("Error: " + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Perform Owner Login
@@ -229,9 +321,9 @@ export default function AuthFlow({ onLoginSuccess, apiFetch, API_BASE }) {
       {/* Visual Brand Panel (Left Side on large screens) */}
       <div className="auth-brand-panel">
         <div className="auth-brand-content">
-          <div className="brand-logo-container">
-            <span className="brand-logo-icon">⚡</span>
-            <span className="brand-logo-text">RentFlow</span>
+          <div className="brand-logo-container" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <Logo size={48} className="brand-logo-svg" style={{ color: 'var(--color-primary)' }} />
+            <span className="brand-logo-text">Rentify</span>
           </div>
           <h2>Smart Property & Rent Management.</h2>
           <p>A complete platform designed for modern landlords and tenants. Manage leases, properties, bills, check-ins, and communication seamlessly.</p>
@@ -243,7 +335,7 @@ export default function AuthFlow({ onLoginSuccess, apiFetch, API_BASE }) {
           </div>
         </div>
         <div className="brand-footer-text">
-          RentFlow Security Core v1.4.0 • Encrypted AES-256
+          Rentify Security Core v1.4.0 • Encrypted AES-256
         </div>
       </div>
 
@@ -252,7 +344,7 @@ export default function AuthFlow({ onLoginSuccess, apiFetch, API_BASE }) {
         {screen === 'role-select' && (
           <div className="auth-card role-select-screen animated fadeUp">
             <div className="auth-header">
-              <h1>Welcome to RentFlow</h1>
+              <h1>Welcome to Rentify</h1>
               <p>Please select your login role to proceed</p>
             </div>
             
@@ -281,7 +373,7 @@ export default function AuthFlow({ onLoginSuccess, apiFetch, API_BASE }) {
             </div>
 
             <div className="auth-footer-help">
-              Trouble logging in? Contact RentFlow Support
+              Trouble logging in? Contact Rentify Support
             </div>
           </div>
         )}
@@ -614,29 +706,84 @@ export default function AuthFlow({ onLoginSuccess, apiFetch, API_BASE }) {
       {/* Forgot Password Information Modal */}
       {showForgotModal && (
         <div className="auth-modal-overlay">
-          <div className="auth-modal animated scaleIn">
+          <div className="auth-modal animated scaleIn" style={{ maxWidth: '400px', width: '100%', padding: '24px' }}>
             <div className="modal-icon-box">
               <Lock size={28} />
             </div>
-            <h3>Password Reset Request</h3>
-            
-            {loginRole === 'owner' ? (
-              <p className="modal-description">
-                For security reasons, landlord passwords can only be reset by the server system administrator. Please coordinate with the IT administrator to re-enable or generate a temporary password.
-              </p>
-            ) : (
-              <p className="modal-description">
-                Your login credentials and account access are controlled by your landlord. Please contact your property owner directly, and they can generate a new temporary password from their <strong>Tenant Portal Details</strong>.
-              </p>
-            )}
+            <h3 style={{ textAlign: 'center', marginBottom: '8px' }}>Password Recovery</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'center', marginBottom: '20px' }}>
+              Simulator Mode: recovery codes are generated locally for verification.
+            </p>
 
-            <button 
-              type="button" 
-              className="modal-dismiss-btn"
-              onClick={() => setShowForgotModal(false)}
-            >
-              Understand & Dismiss
-            </button>
+            {forgotStep === 1 ? (
+              <form onSubmit={handleRequestRecovery} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div className="form-group">
+                  <label>{loginRole === 'owner' ? 'Registered Email or Phone' : 'Tenant Login ID (e.g. TENANT-101)'}</label>
+                  <input 
+                    type="text" 
+                    required 
+                    className="input-field" 
+                    placeholder={loginRole === 'owner' ? 'e.g. sandeep@gmail.com' : 'e.g. TENANT-101'}
+                    value={forgotInput} 
+                    onChange={(e) => setForgotInput(e.target.value)} 
+                  />
+                </div>
+                <button type="submit" className="auth-action-btn" disabled={loading}>
+                  {loading ? 'Requesting...' : 'Request Recovery OTP'}
+                </button>
+                <button type="button" className="modal-dismiss-btn" onClick={() => { setShowForgotModal(false); setForgotStep(1); }}>
+                  Cancel
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleResetPasswordVerify} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {forgotSimulatedOTP && (
+                  <div style={{ background: 'var(--bg-app)', border: '1px dashed var(--color-primary)', padding: '12px', borderRadius: '10px', fontSize: '0.8rem', textAlign: 'center' }}>
+                    🔑 Simulated OTP Sent: <strong style={{ color: 'var(--color-primary)', fontSize: '1rem' }}>{forgotSimulatedOTP}</strong>
+                  </div>
+                )}
+                <div className="form-group">
+                  <label>Enter 6-Digit OTP Code</label>
+                  <input 
+                    type="text" 
+                    required 
+                    maxLength={6}
+                    className="input-field" 
+                    placeholder="e.g. 123456" 
+                    value={forgotRecoveryCode} 
+                    onChange={(e) => setForgotRecoveryCode(e.target.value)} 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Enter New Password</label>
+                  <input 
+                    type="password" 
+                    required 
+                    className="input-field" 
+                    placeholder="Min 6 characters" 
+                    value={forgotNewPassword} 
+                    onChange={(e) => setForgotNewPassword(e.target.value)} 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Confirm New Password</label>
+                  <input 
+                    type="password" 
+                    required 
+                    className="input-field" 
+                    placeholder="Re-enter password" 
+                    value={forgotConfirmPassword} 
+                    onChange={(e) => setForgotConfirmPassword(e.target.value)} 
+                  />
+                </div>
+                <button type="submit" className="auth-action-btn" disabled={loading}>
+                  {loading ? 'Verifying...' : 'Reset & Save Password'}
+                </button>
+                <button type="button" className="modal-dismiss-btn" onClick={() => { setForgotStep(1); setForgotRecoveryCode(''); }}>
+                  Back
+                </button>
+              </form>
+            )}
           </div>
         </div>
       )}
@@ -708,7 +855,7 @@ export function ActiveSessions({ apiFetch, API_BASE, triggerToast, currentUserId
       <div className="section-header-row">
         <div>
           <h2 className="section-title">Device Sessions</h2>
-          <p className="section-subtitle">Track and manage active devices logged into your RentFlow account.</p>
+          <p className="section-subtitle">Track and manage active devices logged into your Rentify account.</p>
         </div>
         <button 
           className="revoke-all-btn"

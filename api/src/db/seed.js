@@ -1,5 +1,5 @@
 const { db } = require('./index');
-const { users, properties, tenants, bills, comments, chats, notifications, sessions } = require('./schema');
+const { users, properties, rooms, tenants, bills, comments, chats, notifications, sessions } = require('./schema');
 const bcrypt = require('bcrypt');
 const cryptoUtils = require('../utils/crypto');
 
@@ -66,13 +66,27 @@ async function seed() {
     // 3. Create Properties
     console.log('Inserting properties...');
     const seedProperties = [
-      { id: 'prop-1', name: 'House A', type: 'Residential', totalRooms: 10, occupied: 2, vacant: 8, monthlyRevenue: 6000 },
-      { id: 'prop-2', name: 'House B', type: 'Residential', totalRooms: 15, occupied: 0, vacant: 15, monthlyRevenue: 0 },
-      { id: 'prop-3', name: 'Shop Complex', type: 'Commercial', totalRooms: 5, occupied: 1, vacant: 4, monthlyRevenue: 15000 }
+      { id: 'prop-1', name: 'House A', type: 'Residential', totalRooms: 10, occupied: 2, vacant: 8, monthlyRevenue: 6000, address: '123, Rose Lane, Patna', description: 'Cozy residential space close to market.', floors: 3, photos: ['https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=500'] },
+      { id: 'prop-2', name: 'House B', type: 'Residential', totalRooms: 15, occupied: 0, vacant: 15, monthlyRevenue: 0, address: '45, VIP Road, Patna', description: 'Premium apartments with backup power.', floors: 4, photos: ['https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=500'] },
+      { id: 'prop-3', name: 'Shop Complex', type: 'Commercial', totalRooms: 5, occupied: 1, vacant: 4, monthlyRevenue: 15000, address: 'Boring Road, Patna', description: 'High visibility shops and office units.', floors: 2, photos: ['https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=500'] }
     ];
 
     for (const p of seedProperties) {
       await db.insert(properties).values(p).onConflictDoNothing();
+    }
+
+    // 3b. Create Rooms
+    console.log('Inserting rooms...');
+    const seedRooms = [
+      { id: 'room-1', propertyId: 'prop-1', number: '101', floor: 1, size: '120 sq ft', type: 'Room', rent: 2500, electricityRate: 6, waterCharges: 150, status: 'Occupied' },
+      { id: 'room-2', propertyId: 'prop-1', number: '102', floor: 1, size: '120 sq ft', type: 'Room', rent: 3500, electricityRate: 6, waterCharges: 150, status: 'Occupied' },
+      { id: 'room-3', propertyId: 'prop-1', number: '103', floor: 2, size: '150 sq ft', type: 'Room', rent: 4000, electricityRate: 6, waterCharges: 150, status: 'Available' },
+      { id: 'room-4', propertyId: 'prop-1', number: '104', floor: 2, size: '150 sq ft', type: 'Room', rent: 4000, electricityRate: 6, waterCharges: 150, status: 'Available' },
+      { id: 'room-5', propertyId: 'prop-3', number: 'Shop 3', floor: 1, size: '300 sq ft', type: 'Shop', rent: 15000, electricityRate: 8, waterCharges: 300, status: 'Occupied' },
+      { id: 'room-6', propertyId: 'prop-3', number: 'Shop 4', floor: 1, size: '350 sq ft', type: 'Shop', rent: 18000, electricityRate: 8, waterCharges: 300, status: 'Available' }
+    ];
+    for (const r of seedRooms) {
+      await db.insert(rooms).values(r).onConflictDoNothing();
     }
 
     // 4. Create Tenants
@@ -107,6 +121,12 @@ async function seed() {
         waterCharges: 150,
         status: 'Active',
         photo: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
+        roomId: 'room-1',
+        gender: 'Male',
+        dob: '1995-08-15',
+        companyCollege: 'Google',
+        vehicleDetails: 'Bi-cycle (Black)',
+        notes: 'Very clean tenant, pays rent on time.',
         documents: {
           profilePhoto: 'profile.jpg',
           aadhaarFront: 'aadhaar_front.jpg',
@@ -143,6 +163,12 @@ async function seed() {
         waterCharges: 150,
         status: 'Active',
         photo: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150',
+        roomId: 'room-2',
+        gender: 'Female',
+        dob: '1997-12-04',
+        companyCollege: 'St. Xaviers School',
+        vehicleDetails: 'Scooty (Activa Red)',
+        notes: 'Requested repair for bathroom tap last week.',
         documents: {
           profilePhoto: 'profile_priya.jpg',
           aadhaarFront: 'aadhaar_p_front.jpg',
@@ -179,6 +205,12 @@ async function seed() {
         waterCharges: 500,
         status: 'Active',
         photo: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150',
+        roomId: 'room-5',
+        gender: 'Male',
+        dob: '1988-03-24',
+        companyCollege: 'Patel Kirana Stores',
+        vehicleDetails: 'Motorcycle (Splendor Black)',
+        notes: 'Commercial shop occupant. Requires invoice copy every month.',
         documents: {
           profilePhoto: 'profile_amit.jpg',
           aadhaarFront: 'aadhaar_a_front.jpg',

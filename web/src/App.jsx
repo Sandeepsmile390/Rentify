@@ -4,7 +4,7 @@ import {
   MessageSquare, FileText, BarChart3, Settings, Bell, Sun, Moon, 
   Search, Plus, Trash2, UserMinus, Archive, Send, Paperclip, 
   ChevronRight, User, Check, RefreshCw, X, Smartphone, 
-  AlertTriangle, HelpCircle, ArrowUpRight, ArrowDownRight, Sparkles, Download, MessageCircle
+  AlertTriangle, HelpCircle, ArrowUpRight, ArrowDownRight, Sparkles, Download, MessageCircle, Megaphone
 } from 'lucide-react';
 import Logo from './components/Logo';
 import AuthFlow, { ActiveSessions } from './components/AuthFlow';
@@ -32,6 +32,9 @@ export default function App() {
   const [tenants, setTenants] = useState([]);
   const [bills, setBills] = useState([]);
   const [comments, setComments] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
+  const [showAddAnnouncement, setShowAddAnnouncement] = useState(false);
+  const [newAnnouncementForm, setNewAnnouncementForm] = useState({ title: '', message: '', category: 'General' });
   const [chats, setChats] = useState([]);
   const [notifications, setNotifications] = useState([]);
   
@@ -58,6 +61,7 @@ export default function App() {
   // Simulator View State
   const [showSimulator, setShowSimulator] = useState(false);
   const [simActiveTab, setSimActiveTab] = useState('home');
+  const [simBillsSubTab, setSimBillsSubTab] = useState('list');
   const [simPhone, setSimPhone] = useState('9876543210'); // Default Ravi's phone
   const [simIsLogged, setSimIsLogged] = useState(false);
   const [simTenantData, setSimTenantData] = useState(null);
@@ -84,13 +88,24 @@ export default function App() {
     tenantLoginId: 'TENANT-' + Math.floor(100 + Math.random() * 900),
     tempPassword: 'Temp@' + Math.floor(100000 + Math.random() * 900000),
     loginEnabled: true,
-    editCredentials: false
+    editCredentials: false,
+    gender: 'Male', dob: '', companyCollege: '', drivingLicense: '', vehicleDetails: '', notes: '', roomId: ''
   });
   const [tenantWizardStep, setTenantWizardStep] = useState(1);
+  const [wizardRooms, setWizardRooms] = useState([]);
   
   // Form Fields - New Property
-  const [newPropertyForm, setNewPropertyForm] = useState({ name: '', type: 'Residential', totalRooms: '10' });
+  const [newPropertyForm, setNewPropertyForm] = useState({ name: '', type: 'Residential', totalRooms: '10', address: '', description: '', floors: '1' });
   
+  // Rooms inventory states
+  const [selectedProperty, setSelectedProperty] = useState(null);
+  const [propertyRooms, setPropertyRooms] = useState([]);
+  const [loadingRooms, setLoadingRooms] = useState(false);
+  const [showAddRoom, setShowAddRoom] = useState(false);
+  const [newRoomForm, setNewRoomForm] = useState({
+    number: '', floor: '1', size: '120 sq ft', type: 'Room', rent: '', electricityRate: '6', waterCharges: '150', status: 'Available'
+  });
+
   // Form Fields - Record Payment
   const [paymentForm, setPaymentForm] = useState({ billId: '', amount: '', method: 'UPI', note: '' });
 
@@ -143,8 +158,36 @@ export default function App() {
 
   // Apply Theme
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    const applyTheme = () => {
+      let resolvedTheme = theme;
+      if (theme === 'system') {
+        const systemPrefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        resolvedTheme = systemPrefersDark ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', resolvedTheme);
+    };
+
+    applyTheme();
     localStorage.setItem('theme', theme);
+
+    if (theme === 'system') {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const listener = (e) => {
+        document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+      };
+      if (mediaQuery.addEventListener) {
+        mediaQuery.addEventListener('change', listener);
+      } else {
+        mediaQuery.addListener(listener);
+      }
+      return () => {
+        if (mediaQuery.removeEventListener) {
+          mediaQuery.removeEventListener('change', listener);
+        } else {
+          mediaQuery.removeListener(listener);
+        }
+      };
+    }
   }, [theme]);
 
   // Fetch initial data — only after authenticated
@@ -157,13 +200,15 @@ export default function App() {
 
   // Update simulator tenant data when tenants update or sim log state changes
   useEffect(() => {
-    if (simIsLogged && tenants.length > 0) {
+    if (role === 'tenant' && tenants.length > 0) {
+      setSimTenantData(tenants[0]);
+    } else if (simIsLogged && tenants.length > 0) {
       const activeT = tenants.find(t => t.phone === simPhone);
       setSimTenantData(activeT || null);
     } else {
       setSimTenantData(null);
     }
-  }, [tenants, simPhone, simIsLogged]);
+  }, [tenants, simPhone, simIsLogged, role]);
 
   // Update simulator bills & comments
   useEffect(() => {
@@ -237,13 +282,14 @@ export default function App() {
   const fetchAllData = async () => {
     try {
       setLoading(true);
-      const [resProp, resTenant, resBill, resComment, resChat, resNotif] = await Promise.all([
+      const [resProp, resTenant, resBill, resComment, resChat, resNotif, resAnn] = await Promise.all([
         apiFetch(`${API_BASE}/properties`).then(r => r.json()),
         apiFetch(`${API_BASE}/tenants`).then(r => r.json()),
         apiFetch(`${API_BASE}/bills`).then(r => r.json()),
         apiFetch(`${API_BASE}/comments`).then(r => r.json()),
         apiFetch(`${API_BASE}/chats`).then(r => r.json()),
-        apiFetch(`${API_BASE}/notifications`).then(r => r.json())
+        apiFetch(`${API_BASE}/notifications`).then(r => r.json()),
+        apiFetch(`${API_BASE}/announcements`).then(r => r.json())
       ]);
 
       setProperties(resProp);
@@ -252,6 +298,7 @@ export default function App() {
       setComments(resComment);
       setChats(resChat);
       setNotifications(resNotif);
+      setAnnouncements(resAnn);
 
       const unreadCount = resNotif.filter(n => !n.read && n.forRole === 'owner').length;
       setUnreadNotificationsCount(unreadCount);
@@ -264,12 +311,13 @@ export default function App() {
 
   const fetchUpdatesOnly = async () => {
     try {
-      const [resTenant, resBill, resComment, resChat, resNotif] = await Promise.all([
+      const [resTenant, resBill, resComment, resChat, resNotif, resAnn] = await Promise.all([
         apiFetch(`${API_BASE}/tenants`).then(r => r.json()),
         apiFetch(`${API_BASE}/bills`).then(r => r.json()),
         apiFetch(`${API_BASE}/comments`).then(r => r.json()),
         apiFetch(`${API_BASE}/chats`).then(r => r.json()),
-        apiFetch(`${API_BASE}/notifications`).then(r => r.json())
+        apiFetch(`${API_BASE}/notifications`).then(r => r.json()),
+        apiFetch(`${API_BASE}/announcements`).then(r => r.json())
       ]);
 
       // Check if new unread notification for owner to sound toast
@@ -285,6 +333,7 @@ export default function App() {
       setComments(resComment);
       setChats(resChat);
       setNotifications(resNotif);
+      setAnnouncements(resAnn);
       setUnreadNotificationsCount(newUnread.length);
     } catch (e) {
       console.log("Background poll error: ", e);
@@ -304,7 +353,7 @@ export default function App() {
       const data = await response.json();
       setProperties([...properties, data]);
       setShowAddProperty(false);
-      setNewPropertyForm({ name: '', type: 'Residential', totalRooms: '10' });
+      setNewPropertyForm({ name: '', type: 'Residential', totalRooms: '10', address: '', description: '', floors: '1' });
       triggerToast(`🏢 Created property: ${data.name}`);
     } catch (error) {
       alert("Failed to add property");
@@ -332,13 +381,205 @@ export default function App() {
     }
   };
 
+  // Rooms Management Actions
+  const handleSelectProperty = async (property) => {
+    setSelectedProperty(property);
+    setLoadingRooms(true);
+    try {
+      const res = await apiFetch(`${API_BASE}/properties/${property.id}/rooms`);
+      const data = await res.json();
+      setPropertyRooms(data);
+    } catch (e) {
+      console.error("Failed to load rooms", e);
+    } finally {
+      setLoadingRooms(false);
+    }
+  };
+
+  const handleAddRoom = async (e) => {
+    e.preventDefault();
+    if (!newRoomForm.number) return;
+    try {
+      const res = await apiFetch(`${API_BASE}/properties/${selectedProperty.id}/rooms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRoomForm)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPropertyRooms([...propertyRooms, data]);
+        setShowAddRoom(false);
+        setNewRoomForm({
+          number: '', floor: '1', size: '120 sq ft', type: 'Room', rent: '', electricityRate: '6', waterCharges: '150', status: 'Available'
+        });
+        triggerToast(`🚪 Room ${data.number} added!`);
+        // Re-fetch properties to sync vacancy/total rooms counts
+        const updatedPropRes = await apiFetch(`${API_BASE}/properties`);
+        const updatedPropData = await updatedPropRes.json();
+        setProperties(updatedPropData);
+        // Also update the selectedProperty view counts
+        const currentProp = updatedPropData.find(p => p.id === selectedProperty.id);
+        if (currentProp) setSelectedProperty(currentProp);
+      } else {
+        alert(data.message || "Failed to add room");
+      }
+    } catch (error) {
+      alert("Failed to add room: " + error.message);
+    }
+  };
+
+  const handleDeleteRoom = async (roomId) => {
+    if (!window.confirm("Are you sure you want to permanently delete this room/shop?")) return;
+    try {
+      const res = await apiFetch(`${API_BASE}/rooms/${roomId}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.success) {
+        setPropertyRooms(propertyRooms.filter(r => r.id !== roomId));
+        triggerToast(`🗑️ Room removed successfully.`);
+        
+        // Re-fetch properties to sync counts
+        const updatedPropRes = await apiFetch(`${API_BASE}/properties`);
+        const updatedPropData = await updatedPropRes.json();
+        setProperties(updatedPropData);
+        const currentProp = updatedPropData.find(p => p.id === selectedProperty.id);
+        if (currentProp) setSelectedProperty(currentProp);
+      } else {
+        alert(data.message || "Failed to delete room");
+      }
+    } catch (error) {
+      alert("Error: " + error.message);
+    }
+  };
+
+  const handleUpdateRoomStatus = async (roomId, status) => {
+    try {
+      const res = await apiFetch(`${API_BASE}/rooms/${roomId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPropertyRooms(propertyRooms.map(r => r.id === roomId ? data : r));
+        triggerToast(`🚪 Room status updated to ${status}.`);
+        
+        // Re-fetch properties to sync counts
+        const updatedPropRes = await apiFetch(`${API_BASE}/properties`);
+        const updatedPropData = await updatedPropRes.json();
+        setProperties(updatedPropData);
+        const currentProp = updatedPropData.find(p => p.id === selectedProperty.id);
+        if (currentProp) setSelectedProperty(currentProp);
+      }
+    } catch (e) {
+      console.error("Failed to update room status", e);
+    }
+  };
+
+  const handleWizardPropertyChange = async (propertyId) => {
+    setNewTenantForm(prev => ({ 
+      ...prev, 
+      propertyId, 
+      roomId: '', 
+      roomNumber: '', 
+      rentAmount: '', 
+      electricityRate: '6', 
+      waterCharges: '150' 
+    }));
+    setWizardRooms([]);
+    if (!propertyId) return;
+    try {
+      const res = await apiFetch(`${API_BASE}/properties/${propertyId}/rooms`);
+      const data = await res.json();
+      setWizardRooms(data.filter(r => r.status === 'Available'));
+    } catch (e) {
+      console.error("Failed to load property rooms for wizard", e);
+    }
+  };
+
+  const handleWizardRoomChange = (roomId) => {
+    const selectedRoom = wizardRooms.find(r => r.id === roomId);
+    if (selectedRoom) {
+      setNewTenantForm(prev => ({
+        ...prev,
+        roomId: selectedRoom.id,
+        roomNumber: selectedRoom.number,
+        roomType: selectedRoom.type,
+        rentAmount: selectedRoom.rent,
+        electricityRate: selectedRoom.electricityRate,
+        waterCharges: selectedRoom.waterCharges
+      }));
+    } else {
+      setNewTenantForm(prev => ({
+        ...prev,
+        roomId: '',
+        roomNumber: '',
+        rentAmount: '',
+        electricityRate: '6',
+        waterCharges: '150'
+      }));
+    }
+  };
+
+  const handleCreateAnnouncement = async (e) => {
+    e.preventDefault();
+    if (!newAnnouncementForm.title || !newAnnouncementForm.message) return;
+    try {
+      const response = await apiFetch(`${API_BASE}/announcements`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newAnnouncementForm)
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setAnnouncements([data, ...announcements]);
+        setShowAddAnnouncement(false);
+        setNewAnnouncementForm({ title: '', message: '', category: 'General' });
+        triggerToast("📢 Announcement broadcasted successfully!");
+        fetchAllData(); // Refresh to sync notifications too
+      } else {
+        alert(data.message || "Failed to broadcast announcement");
+      }
+    } catch (error) {
+      alert("Failed to broadcast: " + error.message);
+    }
+  };
+
+  const handleDeleteAnnouncement = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this announcement?")) return;
+    try {
+      const response = await apiFetch(`${API_BASE}/announcements/${id}`, {
+        method: 'DELETE'
+      });
+      const data = await response.json();
+      if (data.success) {
+        setAnnouncements(announcements.filter(a => a.id !== id));
+        triggerToast("🗑️ Announcement deleted.");
+      } else {
+        alert(data.message || "Failed to delete announcement");
+      }
+    } catch (error) {
+      alert("Error: " + error.message);
+    }
+  };
+
   // Create Tenant
   const handleCreateTenant = async () => {
     try {
+      const parsedForm = {
+        ...newTenantForm,
+        agreementDuration: parseInt(newTenantForm.agreementDuration || '12', 10),
+        rentAmount: parseFloat(newTenantForm.rentAmount || '0'),
+        securityDeposit: parseFloat(newTenantForm.securityDeposit || '0'),
+        electricityRate: parseFloat(newTenantForm.electricityRate || '0'),
+        waterCharges: parseFloat(newTenantForm.waterCharges || '0'),
+      };
+
       const response = await apiFetch(`${API_BASE}/tenants`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: newTenantForm
+        body: parsedForm
       });
       const data = await response.json();
 
@@ -374,7 +615,8 @@ export default function App() {
         tenantLoginId: 'TENANT-' + Math.floor(100 + Math.random() * 900),
         tempPassword: 'Temp@' + Math.floor(100000 + Math.random() * 900000),
         loginEnabled: true,
-        editCredentials: false
+        editCredentials: false,
+        gender: 'Male', dob: '', companyCollege: '', drivingLicense: '', vehicleDetails: '', notes: '', roomId: ''
       });
       triggerToast(`👤 Checked-in new tenant: ${data.name}`);
       fetchAllData();
@@ -789,6 +1031,10 @@ export default function App() {
                 <FileText size={18} />
                 Documents
               </div>
+              <div className={`nav-item ${activeView === 'announcements' ? 'active' : ''}`} onClick={() => { setActiveView('announcements'); setSelectedTenant(null); }}>
+                <Megaphone size={18} />
+                Announcements
+              </div>
               <div className={`nav-item ${activeView === 'reports' ? 'active' : ''}`} onClick={() => { setActiveView('reports'); setSelectedTenant(null); }}>
                 <BarChart3 size={18} />
                 Reports
@@ -1073,7 +1319,7 @@ export default function App() {
               )}
 
               {/* VIEW: PROPERTIES */}
-              {activeView === 'properties' && (
+              {activeView === 'properties' && !selectedProperty && (
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
                     <div>
@@ -1087,7 +1333,7 @@ export default function App() {
 
                   <div className="properties-grid">
                     {properties.map(p => (
-                      <div key={p.id} className="property-card">
+                      <div key={p.id} className="property-card" onClick={() => handleSelectProperty(p)} style={{ cursor: 'pointer' }}>
                         <div className="property-header">
                           <div>
                             <span className="property-type">{p.type} Complex</span>
@@ -1096,7 +1342,10 @@ export default function App() {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                             <Building2 size={24} style={{ color: 'var(--text-muted)' }} />
                             <button 
-                              onClick={() => handleDeleteProperty(p.id)} 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteProperty(p.id);
+                              }} 
                               style={{ 
                                 background: 'transparent', 
                                 border: 'none', 
@@ -1114,6 +1363,10 @@ export default function App() {
                             </button>
                           </div>
                         </div>
+
+                        {p.address && (
+                          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>📍 {p.address}</p>
+                        )}
 
                         <div className="occupancy-meter">
                           <div className="occupancy-label">
@@ -1142,6 +1395,324 @@ export default function App() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {activeView === 'properties' && selectedProperty && (
+                <div>
+                  <button className="dev-btn" style={{ marginBottom: '24px' }} onClick={() => setSelectedProperty(null)}>
+                    ← Back to Properties list
+                  </button>
+
+                  <div className="card" style={{ padding: '24px', marginBottom: '32px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '20px' }}>
+                      <div>
+                        <span className="badge success" style={{ marginBottom: '8px', display: 'inline-block' }}>{selectedProperty.type} Complex</span>
+                        <h2 style={{ fontSize: '2rem', marginBottom: '8px' }}>{selectedProperty.name}</h2>
+                        <p style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>📍 {selectedProperty.address || 'No address specified'}</p>
+                        <p style={{ color: 'var(--text-primary)' }}>{selectedProperty.description || 'No description provided.'}</p>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'inline-block', marginTop: '12px' }}>
+                          Floors: <strong>{selectedProperty.floors || 1}</strong> • Total Rooms/Shops: <strong>{selectedProperty.totalRooms || 0}</strong> • Occupied: <strong>{selectedProperty.occupied || 0}</strong> • Available: <strong>{selectedProperty.vacant || 0}</strong>
+                        </span>
+                      </div>
+                      
+                      <button className="btn-primary" onClick={() => setShowAddRoom(true)}>
+                        <Plus size={16} /> Add Room/Shop
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Add Room Modal/Form Overlay */}
+                  {showAddRoom && (
+                    <div className="modal-overlay">
+                      <div className="modal-content" style={{ maxWidth: '500px' }}>
+                        <div className="modal-header">
+                          <h2>Add New Room/Shop</h2>
+                          <button className="close-btn" onClick={() => setShowAddRoom(false)}><X size={20} /></button>
+                        </div>
+                        <form onSubmit={handleAddRoom} style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
+                          <div className="form-group">
+                            <label>Room/Unit Number</label>
+                            <input 
+                              type="text" 
+                              required 
+                              placeholder="e.g. 101 or Shop A" 
+                              className="input-field" 
+                              value={newRoomForm.number}
+                              onChange={(e) => setNewRoomForm({ ...newRoomForm, number: e.target.value })}
+                            />
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                            <div className="form-group">
+                              <label>Floor Number</label>
+                              <input 
+                                type="number" 
+                                placeholder="1" 
+                                className="input-field" 
+                                value={newRoomForm.floor}
+                                onChange={(e) => setNewRoomForm({ ...newRoomForm, floor: e.target.value })}
+                              />
+                            </div>
+                            <div className="form-group">
+                              <label>Unit Size (sq ft)</label>
+                              <input 
+                                type="text" 
+                                placeholder="e.g. 120 sq ft" 
+                                className="input-field" 
+                                value={newRoomForm.size}
+                                onChange={(e) => setNewRoomForm({ ...newRoomForm, size: e.target.value })}
+                              />
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                            <div className="form-group">
+                              <label>Unit Type</label>
+                              <select 
+                                className="input-field" 
+                                value={newRoomForm.type}
+                                onChange={(e) => setNewRoomForm({ ...newRoomForm, type: e.target.value })}
+                              >
+                                <option value="Room">Room</option>
+                                <option value="Shop">Shop</option>
+                                <option value="Flat">Flat</option>
+                                <option value="PG Bed">PG Bed</option>
+                              </select>
+                            </div>
+                            <div className="form-group">
+                              <label>Initial Status</label>
+                              <select 
+                                className="input-field" 
+                                value={newRoomForm.status}
+                                onChange={(e) => setNewRoomForm({ ...newRoomForm, status: e.target.value })}
+                              >
+                                <option value="Available">Available</option>
+                                <option value="Reserved">Reserved</option>
+                                <option value="Under Maintenance">Under Maintenance</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px' }}>
+                            <div className="form-group">
+                              <label>Base Rent (₹)</label>
+                              <input 
+                                type="number" 
+                                required
+                                placeholder="3500" 
+                                className="input-field" 
+                                value={newRoomForm.rent}
+                                onChange={(e) => setNewRoomForm({ ...newRoomForm, rent: e.target.value })}
+                              />
+                            </div>
+                            <div className="form-group">
+                              <label>Electricity Unit Rate</label>
+                              <input 
+                                type="number" 
+                                placeholder="6" 
+                                className="input-field" 
+                                value={newRoomForm.electricityRate}
+                                onChange={(e) => setNewRoomForm({ ...newRoomForm, electricityRate: e.target.value })}
+                              />
+                            </div>
+                            <div className="form-group">
+                              <label>Water Charges (₹)</label>
+                              <input 
+                                type="number" 
+                                placeholder="150" 
+                                className="input-field" 
+                                value={newRoomForm.waterCharges}
+                                onChange={(e) => setNewRoomForm({ ...newRoomForm, waterCharges: e.target.value })}
+                              />
+                            </div>
+                          </div>
+
+                          <button type="submit" className="btn-primary" style={{ marginTop: '10px', padding: '12px' }}>
+                            Save Unit Details
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Rooms List Table */}
+                  <div className="card" style={{ padding: '24px' }}>
+                    <h3 style={{ marginBottom: '16px' }}>Property Rooms & Shops Inventory</h3>
+                    {loadingRooms ? (
+                      <p>Loading rooms...</p>
+                    ) : propertyRooms.length === 0 ? (
+                      <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>No rooms/shops configured for this property yet.</p>
+                    ) : (
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '2.5px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                            <th style={{ padding: '12px 14px' }}>Room/Shop Number</th>
+                            <th style={{ padding: '12px 14px' }}>Type</th>
+                            <th style={{ padding: '12px 14px' }}>Floor</th>
+                            <th style={{ padding: '12px 14px' }}>Size</th>
+                            <th style={{ padding: '12px 14px' }}>Base Rent</th>
+                            <th style={{ padding: '12px 14px' }}>Rates</th>
+                            <th style={{ padding: '12px 14px' }}>Status</th>
+                            <th style={{ padding: '12px 14px', textAlign: 'right' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {propertyRooms.map(room => (
+                            <tr key={room.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                              <td style={{ padding: '14px', fontWeight: 700 }}>{room.number}</td>
+                              <td style={{ padding: '14px' }}>
+                                <span className="badge" style={{ background: 'var(--bg-app)', color: 'var(--text-primary)' }}>{room.type}</span>
+                              </td>
+                              <td style={{ padding: '14px' }}>Floor {room.floor}</td>
+                              <td style={{ padding: '14px' }}>{room.size}</td>
+                              <td style={{ padding: '14px', fontWeight: 600 }}>₹{room.rent}/mo</td>
+                              <td style={{ padding: '14px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                Elec: ₹{room.electricityRate}/u • Water: ₹{room.waterCharges}
+                              </td>
+                              <td style={{ padding: '14px' }}>
+                                <select 
+                                  value={room.status} 
+                                  disabled={room.status === 'Occupied'}
+                                  onChange={(e) => handleUpdateRoomStatus(room.id, e.target.value)}
+                                  className="input-field"
+                                  style={{ 
+                                    padding: '4px 8px', 
+                                    fontSize: '0.8rem', 
+                                    width: 'auto',
+                                    fontWeight: 600,
+                                    borderRadius: '8px',
+                                    border: '1.5px solid var(--border-color)',
+                                    background: room.status === 'Available' ? 'var(--color-success-light)' : room.status === 'Occupied' ? 'var(--color-primary-light)' : 'var(--bg-app)',
+                                    color: room.status === 'Available' ? 'var(--color-success)' : room.status === 'Occupied' ? 'var(--color-primary)' : 'var(--text-secondary)'
+                                  }}
+                                >
+                                  <option value="Available">Available</option>
+                                  <option value="Occupied">Occupied</option>
+                                  <option value="Reserved">Reserved</option>
+                                  <option value="Under Maintenance">Under Maintenance</option>
+                                </select>
+                              </td>
+                              <td style={{ padding: '14px', textAlign: 'right' }}>
+                                <button 
+                                  className="dev-btn" 
+                                  style={{ padding: '4px 8px', color: 'var(--color-danger)' }}
+                                  disabled={room.status === 'Occupied'}
+                                  onClick={() => handleDeleteRoom(room.id)}
+                                >
+                                  Delete
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* VIEW: ANNOUNCEMENTS */}
+              {activeView === 'announcements' && (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                    <div>
+                      <h1 style={{ fontSize: '2.2rem', marginBottom: '6px' }}>Broadcast Board</h1>
+                      <p style={{ color: 'var(--text-secondary)' }}>Send announcements, updates, and emergency notices to all active tenants.</p>
+                    </div>
+                    <button className="btn-primary" onClick={() => setShowAddAnnouncement(true)}>
+                      <Plus size={16} /> New Broadcast
+                    </button>
+                  </div>
+
+                  {showAddAnnouncement && (
+                    <div className="modal-overlay">
+                      <div className="modal-content" style={{ maxWidth: '500px' }}>
+                        <div className="modal-header">
+                          <h2>New Announcement Broadcast</h2>
+                          <button className="close-btn" onClick={() => setShowAddAnnouncement(false)}><X size={20} /></button>
+                        </div>
+                        <form onSubmit={handleCreateAnnouncement} style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
+                          <div className="form-group">
+                            <label>Broadcast Title</label>
+                            <input 
+                              type="text" 
+                              required 
+                              placeholder="e.g. Water Supply Shutdown" 
+                              className="input-field" 
+                              value={newAnnouncementForm.title}
+                              onChange={(e) => setNewAnnouncementForm({ ...newAnnouncementForm, title: e.target.value })}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label>Notice Category</label>
+                            <select 
+                              className="input-field" 
+                              value={newAnnouncementForm.category}
+                              onChange={(e) => setNewAnnouncementForm({ ...newAnnouncementForm, category: e.target.value })}
+                            >
+                              <option value="General">General</option>
+                              <option value="Maintenance">Maintenance</option>
+                              <option value="Emergency">Emergency Alert</option>
+                              <option value="Water Supply">Water Supply Alert</option>
+                              <option value="Electricity">Electricity Maintenance</option>
+                              <option value="Rent Reminder">Rent Payment Reminder</option>
+                            </select>
+                          </div>
+
+                          <div className="form-group">
+                            <label>Detailed Message</label>
+                            <textarea 
+                              required 
+                              rows={5}
+                              placeholder="Write the detailed announcement message here..." 
+                              className="input-field" 
+                              value={newAnnouncementForm.message}
+                              onChange={(e) => setNewAnnouncementForm({ ...newAnnouncementForm, message: e.target.value })}
+                            />
+                          </div>
+
+                          <button type="submit" className="btn-primary" style={{ padding: '12px', marginTop: '8px' }}>
+                            Broadcast Notice
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    {announcements.length === 0 ? (
+                      <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
+                        <p style={{ color: 'var(--text-muted)' }}>No broadcasts created yet.</p>
+                      </div>
+                    ) : (
+                      announcements.map(ann => (
+                        <div key={ann.id} className="card" style={{ padding: '24px', borderLeft: '5px solid var(--color-primary)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                            <div>
+                              <span className="badge info" style={{ marginBottom: '6px', display: 'inline-block' }}>{ann.category}</span>
+                              <h3 style={{ fontSize: '1.2rem', margin: 0, fontWeight: 700 }}>{ann.title}</h3>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                {new Date(ann.createdAt).toLocaleString()}
+                              </span>
+                              <button 
+                                onClick={() => handleDeleteAnnouncement(ann.id)}
+                                style={{ background: 'transparent', border: 'none', color: 'var(--color-danger)', cursor: 'pointer' }}
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </div>
+                          <p style={{ margin: 0, whiteSpace: 'pre-wrap', color: 'var(--text-primary)', lineHeight: '1.6' }}>
+                            {ann.message}
+                          </p>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               )}
@@ -1296,6 +1867,7 @@ export default function App() {
                     <button className={`tab-btn ${detailTab === 'info' ? 'active' : ''}`} onClick={() => setDetailTab('info')}>Info Details</button>
                     <button className={`tab-btn ${detailTab === 'bills' ? 'active' : ''}`} onClick={() => setDetailTab('bills')}>Bills & Invoices</button>
                     <button className={`tab-btn ${detailTab === 'payments' ? 'active' : ''}`} onClick={() => setDetailTab('payments')}>Payments History</button>
+                    <button className={`tab-btn ${detailTab === 'ledger' ? 'active' : ''}`} onClick={() => setDetailTab('ledger')}>Ledger Statement</button>
                     <button className={`tab-btn ${detailTab === 'documents' ? 'active' : ''}`} onClick={() => setDetailTab('documents')}>Documents</button>
                     <button className={`tab-btn ${detailTab === 'comments' ? 'active' : ''}`} onClick={() => setDetailTab('comments')}>Comments/Tickets</button>
                     <button className={`tab-btn ${detailTab === 'chat' ? 'active' : ''}`} onClick={() => setDetailTab('chat')}>Seen/Chat History</button>
@@ -1512,33 +2084,189 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* TAB: DOCUMENTS */}
-                    {detailTab === 'documents' && (
-                      <div className="card">
-                        <div className="document-grid">
-                          <div className="document-item" onClick={() => alert("Simulating download profilePhoto.jpg")}>
-                            <User size={32} />
-                            <span className="doc-name">Profile Photo</span>
-                            <span className="badge success">Verified</span>
+                    {/* TAB: LEDGER STATEMENT */}
+                    {detailTab === 'ledger' && (() => {
+                      const tenantBills = bills.filter(b => b.tenantId === selectedTenant.id);
+                      
+                      const txs = [];
+                      tenantBills.forEach(b => {
+                        txs.push({
+                          date: b.dueDate || new Date().toISOString().split('T')[0],
+                          type: 'Invoice',
+                          description: `Monthly Rent Invoice - ${b.billingMonth}`,
+                          amount: b.totalAmount,
+                          change: b.totalAmount
+                        });
+                        
+                        if (b.payments && Array.isArray(b.payments)) {
+                          b.payments.forEach(p => {
+                            txs.push({
+                              date: p.date || new Date().toISOString().split('T')[0],
+                              type: 'Receipt',
+                              description: `Rent payment received [${p.method}] ${p.note ? ` - ${p.note}` : ''}`,
+                              amount: p.amount,
+                              change: -p.amount
+                            });
+                          });
+                        }
+                      });
+
+                      txs.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                      let currentBalance = 0;
+                      const ledgerRows = txs.map(tx => {
+                        currentBalance += tx.change;
+                        return {
+                          ...tx,
+                          balance: currentBalance
+                        };
+                      });
+
+                      const totalInvoiceSum = tenantBills.reduce((s, b) => s + b.totalAmount, 0);
+                      const totalReceiptSum = tenantBills.reduce((s, b) => s + b.paidAmount, 0);
+                      const totalBalanceDues = totalInvoiceSum - totalReceiptSum;
+
+                      return (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                            <h3 style={{ margin: 0 }}>Running Ledger Statement</h3>
+                            <button className="dev-btn" onClick={() => triggerToast("📥 PDF statement generated for tenant ledger.")}>
+                              Print Statement
+                            </button>
                           </div>
-                          <div className="document-item" onClick={() => alert("Simulating Aadhaar Card PDF preview")}>
-                            <FileText size={32} />
-                            <span className="doc-name">Aadhaar Card (Front/Back)</span>
-                            <span className="badge success">Verified</span>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+                            <div className="card" style={{ padding: '16px', background: 'var(--bg-app)', textAlign: 'center' }}>
+                              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Invoiced</label>
+                              <div style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: '4px' }}>₹{totalInvoiceSum}</div>
+                            </div>
+                            <div className="card" style={{ padding: '16px', background: 'var(--bg-app)', textAlign: 'center' }}>
+                              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Settled</label>
+                              <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--color-success)', marginTop: '4px' }}>₹{totalReceiptSum}</div>
+                            </div>
+                            <div className="card" style={{ padding: '16px', background: 'var(--bg-app)', textAlign: 'center' }}>
+                              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Outstanding Balance</label>
+                              <div style={{ fontSize: '1.25rem', fontWeight: 800, color: totalBalanceDues > 0 ? 'var(--color-danger)' : 'inherit', marginTop: '4px' }}>₹{totalBalanceDues}</div>
+                            </div>
+                            <div className="card" style={{ padding: '16px', background: 'var(--bg-app)', textAlign: 'center' }}>
+                              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Security Deposit (Held)</label>
+                              <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--color-primary)', marginTop: '4px' }}>₹{selectedTenant.securityDeposit}</div>
+                            </div>
                           </div>
-                          <div className="document-item" onClick={() => alert("Simulating PAN Card JPG preview")}>
-                            <FileText size={32} />
-                            <span className="doc-name">PAN Card</span>
-                            <span className="badge success">Verified</span>
-                          </div>
-                          <div className="document-item" onClick={() => alert("Opening Rental Agreement document copy")}>
-                            <FileText size={32} />
-                            <span className="doc-name">Rental Agreement</span>
-                            <span className="badge success">Signed</span>
+
+                          <div className="card" style={{ padding: '0px', overflowX: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                              <thead>
+                                <tr style={{ borderBottom: '2px solid var(--border-color)', color: 'var(--text-secondary)' }}>
+                                  <th style={{ padding: '12px' }}>Date</th>
+                                  <th style={{ padding: '12px' }}>Type</th>
+                                  <th style={{ padding: '12px' }}>Description</th>
+                                  <th style={{ padding: '12px', textAlign: 'right' }}>Debit (Invoice)</th>
+                                  <th style={{ padding: '12px', textAlign: 'right' }}>Credit (Paid)</th>
+                                  <th style={{ padding: '12px', textAlign: 'right' }}>Balance Due</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {ledgerRows.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                                      No transactions recorded in this ledger statement yet.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  ledgerRows.map((row, idx) => (
+                                    <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                      <td style={{ padding: '12px' }}>{row.date}</td>
+                                      <td style={{ padding: '12px' }}>
+                                        <span className={`badge ${row.type === 'Invoice' ? 'danger' : 'success'}`} style={{ fontSize: '0.65rem' }}>
+                                          {row.type}
+                                        </span>
+                                      </td>
+                                      <td style={{ padding: '12px', color: 'var(--text-primary)' }}>{row.description}</td>
+                                      <td style={{ padding: '12px', textAlign: 'right', fontWeight: row.type === 'Invoice' ? 'bold' : 'normal' }}>
+                                        {row.type === 'Invoice' ? `₹${row.amount}` : '-'}
+                                      </td>
+                                      <td style={{ padding: '12px', textAlign: 'right', fontWeight: row.type === 'Receipt' ? 'bold' : 'normal', color: row.type === 'Receipt' ? 'var(--color-success)' : 'inherit' }}>
+                                        {row.type === 'Receipt' ? `₹${row.amount}` : '-'}
+                                      </td>
+                                      <td style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>
+                                        ₹{row.balance}
+                                      </td>
+                                    </tr>
+                                  ))
+                                )}
+                              </tbody>
+                            </table>
                           </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
+
+                    {/* TAB: DOCUMENTS */}
+                    {detailTab === 'documents' && (() => {
+                      const docs = selectedTenant.documents || {};
+                      
+                      const openDoc = async (docUrl, docName) => {
+                        if (!docUrl) {
+                          alert(`No uploaded file for ${docName} yet.`);
+                          return;
+                        }
+                        if (docUrl.startsWith('http')) {
+                          window.open(docUrl, '_blank');
+                          return;
+                        }
+                        try {
+                          const res = await fetch(`${API_BASE}/documents/signed-url/${docUrl}`, {
+                            headers: {
+                              'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
+                            }
+                          });
+                          const data = await res.json();
+                          if (res.ok && data.url) {
+                            window.open(data.url, '_blank');
+                          } else {
+                            alert(`Error generating signed link: ${data.message || 'Unknown error'}`);
+                          }
+                        } catch (err) {
+                          alert(`Error: ${err.message}`);
+                        }
+                      };
+
+                      return (
+                        <div className="card">
+                          <div className="document-grid">
+                            <div className="document-item" onClick={() => openDoc(selectedTenant.photo || docs.profilePhoto, 'Profile Photo')} style={{ cursor: 'pointer' }}>
+                              <User size={32} />
+                              <span className="doc-name">Profile Photo</span>
+                              <span className={`badge ${(selectedTenant.photo || docs.profilePhoto) ? 'success' : 'warning'}`}>
+                                {(selectedTenant.photo || docs.profilePhoto) ? 'Uploaded (Open)' : 'Not Uploaded'}
+                              </span>
+                            </div>
+                            <div className="document-item" onClick={() => openDoc(docs.aadhaar || docs.aadhaarFront, 'Aadhaar Card')} style={{ cursor: 'pointer' }}>
+                              <FileText size={32} />
+                              <span className="doc-name">Aadhaar Card (Front/Back)</span>
+                              <span className={`badge ${(docs.aadhaar || docs.aadhaarFront) ? 'success' : 'warning'}`}>
+                                {(docs.aadhaar || docs.aadhaarFront) ? 'Uploaded (Open)' : 'Not Uploaded'}
+                              </span>
+                            </div>
+                            <div className="document-item" onClick={() => openDoc(docs.pan, 'PAN Card')} style={{ cursor: 'pointer' }}>
+                              <FileText size={32} />
+                              <span className="doc-name">PAN Card</span>
+                              <span className={`badge ${docs.pan ? 'success' : 'warning'}`}>
+                                {docs.pan ? 'Uploaded (Open)' : 'Not Uploaded'}
+                              </span>
+                            </div>
+                            <div className="document-item" onClick={() => openDoc(docs.agreement, 'Rental Agreement')} style={{ cursor: 'pointer' }}>
+                              <FileText size={32} />
+                              <span className="doc-name">Rental Agreement</span>
+                              <span className={`badge ${docs.agreement ? 'success' : 'warning'}`}>
+                                {docs.agreement ? 'Uploaded (Open)' : 'Not Uploaded'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* TAB: COMMENTS (Maintenance queries) */}
                     {detailTab === 'comments' && (
@@ -1844,24 +2572,158 @@ export default function App() {
               )}
 
               {/* VIEW: REPORTS & STATS */}
-              {activeView === 'reports' && (
-                <div className="card" style={{ textAlign: 'center', padding: '60px 20px' }}>
-                  <BarChart3 size={48} style={{ color: 'var(--color-primary)', marginBottom: '16px' }} />
-                  <h2>Estates Utility & Electricity Trend Analysis</h2>
-                  <p style={{ color: 'var(--text-secondary)', maxWidth: '480px', margin: '12px auto' }}>Check electricity unit usages, monthly collection averages, and water expenses per estate.</p>
-                  
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '24px' }}>
-                    <div style={{ border: '1px solid var(--border-color)', padding: '16px', borderRadius: '16px', minWidth: '150px' }}>
-                      <h4 style={{ color: 'var(--text-muted)' }}>Total Collection</h4>
-                      <span style={{ fontSize: '1.5rem', fontWeight: 800 }}>₹{monthlyCollection + 7250}</span>
+              {activeView === 'reports' && (() => {
+                const totalCollected = bills.reduce((acc, b) => acc + (b.paidAmount || 0), 0);
+                const totalDues = bills.reduce((acc, b) => acc + (b.pendingAmount || 0), 0);
+                const totalTarget = totalCollected + totalDues;
+                const collectionEfficiency = totalTarget > 0 ? Math.round((totalCollected / totalTarget) * 100) : 100;
+                
+                const totalR = properties.reduce((acc, p) => acc + (p.totalRooms || 0), 0);
+                const totalO = properties.reduce((acc, p) => acc + (p.occupied || 0), 0);
+                const overallOccupancyRate = totalR > 0 ? Math.round((totalO / totalR) * 100) : 0;
+
+                return (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                      <div>
+                        <h1 style={{ fontSize: '2.2rem', marginBottom: '6px' }}>Financial Reports & Analytics</h1>
+                        <p style={{ color: 'var(--text-secondary)' }}>Detailed insights into collections, occupancy rates, utility consumption, and vacancy tracking.</p>
+                      </div>
+                      <div style={{ display: 'flex', gap: '12px' }}>
+                        <button className="dev-btn" onClick={() => triggerToast("📥 Exporting financial Excel sheet... Download started.")}>
+                          Export Excel
+                        </button>
+                        <button className="btn-primary" onClick={() => triggerToast("📥 Exporting PDF Ledger statement... Download started.")}>
+                          Export PDF
+                        </button>
+                      </div>
                     </div>
-                    <div style={{ border: '1px solid var(--border-color)', padding: '16px', borderRadius: '16px', minWidth: '150px' }}>
-                      <h4 style={{ color: 'var(--text-muted)' }}>Average Dues</h4>
-                      <span style={{ fontSize: '1.5rem', fontWeight: 800 }}>₹{pendingAmount / 3 || 0}</span>
+
+                    {/* Summary Metric Cards */}
+                    <div className="properties-grid" style={{ marginBottom: '32px', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                      <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Total Collection Received</span>
+                        <span style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--color-success)' }}>₹{totalCollected}</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>From all logged receipts</span>
+                      </div>
+
+                      <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Outstanding Dues</span>
+                        <span style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--color-danger)' }}>₹{totalDues}</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Pending payment reviews</span>
+                      </div>
+
+                      <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Collection Efficiency</span>
+                        <span style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--color-primary)' }}>{collectionEfficiency}%</span>
+                        <div className="progress-bar-container" style={{ height: '6px', marginTop: '4px' }}>
+                          <div className="progress-bar-fill" style={{ width: `${collectionEfficiency}%` }} />
+                        </div>
+                      </div>
+
+                      <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Overall Occupancy Rate</span>
+                        <span style={{ fontSize: '2rem', fontWeight: 800 }}>{overallOccupancyRate}%</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{totalO} / {totalR} active spaces</span>
+                      </div>
+                    </div>
+
+                    {/* Vacancy & Revenue breakdown per Property */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '24px', marginBottom: '32px' }}>
+                      
+                      {/* Card: Occupancy Breakdown */}
+                      <div className="card" style={{ padding: '24px' }}>
+                        <h3 style={{ marginBottom: '16px' }}>Property Occupancy Status</h3>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                          {properties.map(p => {
+                            const occRate = p.totalRooms > 0 ? Math.round((p.occupied / p.totalRooms) * 100) : 0;
+                            return (
+                              <div key={p.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                                  <span style={{ fontWeight: 'bold' }}>{p.name} ({p.type})</span>
+                                  <span style={{ color: 'var(--text-secondary)' }}>{p.occupied}/{p.totalRooms} Units • {occRate}%</span>
+                                </div>
+                                <div className="progress-bar-container" style={{ height: '8px' }}>
+                                  <div className="progress-bar-fill" style={{ width: `${occRate}%`, background: occRate > 75 ? 'var(--color-success)' : occRate > 40 ? 'var(--color-primary)' : 'var(--color-danger)' }} />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Card: Revenue Targets */}
+                      <div className="card" style={{ padding: '24px' }}>
+                        <h3 style={{ marginBottom: '16px' }}>Target Revenue Comparison</h3>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                          {properties.map(p => {
+                            const targetRev = p.monthlyRevenue || 0;
+                            const actualColl = bills
+                              .filter(b => b.propertyName === p.name)
+                              .reduce((sum, b) => sum + (b.paidAmount || 0), 0);
+                            const revPct = targetRev > 0 ? Math.round((actualColl / targetRev) * 100) : 100;
+                            return (
+                              <div key={p.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                                  <span style={{ fontWeight: 'bold' }}>{p.name}</span>
+                                  <span style={{ color: 'var(--text-secondary)' }}>₹{actualColl} / ₹{targetRev} ({revPct}%)</span>
+                                </div>
+                                <div className="progress-bar-container" style={{ height: '8px' }}>
+                                  <div className="progress-bar-fill" style={{ width: `${Math.min(100, revPct)}%`, background: 'var(--color-success)' }} />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                    </div>
+
+                    {/* Electricity and Utilities Consumption */}
+                    <div className="card" style={{ padding: '24px' }}>
+                      <h3 style={{ marginBottom: '16px' }}>Electricity Meter Readings & Consumption Tracker</h3>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '2.5px solid var(--border-color)', color: 'var(--text-secondary)' }}>
+                            <th style={{ padding: '12px' }}>Tenant Name</th>
+                            <th style={{ padding: '12px' }}>Property / Room</th>
+                            <th style={{ padding: '12px' }}>Month</th>
+                            <th style={{ padding: '12px' }}>Prev Reading</th>
+                            <th style={{ padding: '12px' }}>Curr Reading</th>
+                            <th style={{ padding: '12px' }}>Units Used</th>
+                            <th style={{ padding: '12px' }}>Rate</th>
+                            <th style={{ padding: '12px' }}>Electricity Cost</th>
+                            <th style={{ padding: '12px', textAlign: 'right' }}>Receipt Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bills.map(bill => {
+                            const units = bill.electricityUnits || Math.max(0, (bill.currMeterReading || 0) - (bill.prevMeterReading || 0));
+                            if (units <= 0 && !bill.electricityAmount) return null;
+                            return (
+                              <tr key={bill.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                <td style={{ padding: '12px', fontWeight: 'bold' }}>{bill.tenantName}</td>
+                                <td style={{ padding: '12px' }}>{bill.propertyName} / {bill.roomNumber}</td>
+                                <td style={{ padding: '12px' }}>{bill.billingMonth}</td>
+                                <td style={{ padding: '12px' }}>{bill.prevMeterReading || 0} kWh</td>
+                                <td style={{ padding: '12px' }}>{bill.currMeterReading || 0} kWh</td>
+                                <td style={{ padding: '12px', fontWeight: 'bold' }}>{units} kWh</td>
+                                <td style={{ padding: '12px' }}>₹{bill.electricityRate}/unit</td>
+                                <td style={{ padding: '12px', fontWeight: 'bold' }}>₹{bill.electricityAmount || (units * bill.electricityRate)}</td>
+                                <td style={{ padding: '12px', textAlign: 'right' }}>
+                                  <span className={`badge ${bill.status === 'Paid' ? 'success' : bill.status === 'Partial Paid' ? 'warning' : 'danger'}`}>
+                                    {bill.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* VIEW: SETTINGS */}
               {activeView === 'settings' && (
@@ -1876,7 +2738,19 @@ export default function App() {
                       <label>Registered Mobile number</label>
                       <input type="text" className="input-field" defaultValue="9999999999" />
                     </div>
-                    <button className="btn-primary">Save Settings</button>
+                    <div className="form-group">
+                      <label>Interface Theme Mode</label>
+                      <select 
+                        className="input-field" 
+                        value={theme} 
+                        onChange={(e) => setTheme(e.target.value)}
+                      >
+                        <option value="light">☀️ Light Theme</option>
+                        <option value="dark">🌙 Dark Theme</option>
+                        <option value="system">🖥️ System Default</option>
+                      </select>
+                    </div>
+                    <button className="btn-primary" onClick={() => triggerToast("💾 Settings saved successfully.")}>Save Settings</button>
                   </div>
                 </div>
               )}
@@ -1893,271 +2767,725 @@ export default function App() {
         </div>
       ) : (
         // FULL INTERACTIVE TENANT WEB PORTAL (DESKTOP VERSION)
-        <div style={{ padding: '40px', background: 'var(--bg-app)', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-          
-          {/* Header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px', borderBottom: '1px solid var(--border-color)', paddingBottom: '20px' }}>
-            <div>
-              <span className="badge success" style={{ marginBottom: '8px', display: 'inline-block' }}>Tenant Dashboard</span>
-              <h1 style={{ fontSize: '2.4rem', fontWeight: 800, marginBottom: '6px', letterSpacing: '-0.03em' }}>Welcome back, {simTenantData?.name || 'Loading profile...'}</h1>
-              <p style={{ color: 'var(--text-secondary)' }}>
-                📍 Room {simTenantData?.roomNumber} ({simTenantData?.roomType}) • {simTenantData?.propertyName} • Checked-in: {simTenantData?.moveInDate}
-              </p>
+        <div className="web-layout">
+          {/* Sidebar */}
+          <div className="sidebar">
+            <div className="sidebar-header">
+              <Logo size={42} />
+              <div className="sidebar-logo">Rentify</div>
             </div>
-            <button className="btn-primary" style={{ background: 'var(--color-danger)', borderRadius: '24px', padding: '12px 24px' }} onClick={handleWebLogout}>
-              Logout Portal
-            </button>
+            
+            <div className="sidebar-nav">
+              <div className={`nav-item ${simActiveTab === 'home' ? 'active' : ''}`} onClick={() => setSimActiveTab('home')}>
+                <LayoutDashboard size={18} />
+                Overview Dashboard
+              </div>
+              <div className={`nav-item ${simActiveTab === 'bills' ? 'active' : ''}`} onClick={() => setSimActiveTab('bills')}>
+                <Receipt size={18} />
+                My Invoices & Bills
+              </div>
+              <div className={`nav-item ${simActiveTab === 'ledger' ? 'active' : ''}`} onClick={() => setSimActiveTab('ledger')}>
+                <CreditCard size={18} />
+                Ledger Statement
+              </div>
+              <div className={`nav-item ${simActiveTab === 'notices' ? 'active' : ''}`} onClick={() => setSimActiveTab('notices')}>
+                <Megaphone size={18} />
+                Notice Board
+              </div>
+              <div className={`nav-item ${simActiveTab === 'tickets' ? 'active' : ''}`} onClick={() => setSimActiveTab('tickets')}>
+                <HelpCircle size={18} />
+                Maintenance Tickets
+              </div>
+              <div className={`nav-item ${simActiveTab === 'chat' ? 'active' : ''}`} onClick={() => setSimActiveTab('chat')}>
+                <MessageSquare size={18} />
+                Landlord Chat
+              </div>
+              <div className={`nav-item ${simActiveTab === 'profile' ? 'active' : ''}`} onClick={() => setSimActiveTab('profile')}>
+                <User size={18} />
+                Rental Profile
+              </div>
+            </div>
+
+            <div className="sidebar-footer">
+              <img src={simTenantData?.photo || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100"} alt="Avatar" className="user-avatar" />
+              <div className="user-info" style={{ cursor: 'pointer' }} onClick={handleWebLogout}>
+                <span className="user-name">{simTenantData?.name || 'Tenant User'}</span>
+                <span className="user-role">Tenant (Logout)</span>
+              </div>
+            </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1.2fr', gap: '32px', flexGrow: 1 }}>
-            
-            {/* LEFT COLUMN: DUE, TICKETS, BILLS */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+          {/* Main Content Area */}
+          <div className="main-content">
+            {/* Topbar */}
+            <div className="topbar">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span className="badge tenant" style={{ fontSize: '0.85rem', padding: '6px 12px', background: 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-primary)' }}>
+                  📍 {simTenantData?.propertyName || 'Rentify Property'}
+                </span>
+                <span className="badge info" style={{ fontSize: '0.85rem', padding: '6px 12px' }}>
+                  Room {simTenantData?.roomNumber || 'N/A'} ({simTenantData?.roomType || 'Room'})
+                </span>
+              </div>
               
-              {/* Due Summary Card */}
-              {simLatestBill ? (
-                <div className="card" style={{ padding: '24px', background: 'linear-gradient(135deg, #1E1B4B 0%, #312E81 100%)', color: 'white', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <span style={{ fontSize: '0.85rem', color: '#94A3B8', fontWeight: 600 }}>OUTSTANDING BALANCE ({simLatestBill.billingMonth})</span>
-                      <h2 style={{ fontSize: '2.8rem', fontWeight: 900, color: '#FFF' }}>₹{simLatestBill.pendingAmount}</h2>
-                    </div>
-                    <span className="badge" style={{ background: simLatestBill.status === 'Paid' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)', color: simLatestBill.status === 'Paid' ? '#4ADE80' : '#FCA5A5' }}>
-                      {simLatestBill.status}
-                    </span>
-                  </div>
+              <div className="topbar-actions">
+                <button className="theme-toggle" style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+                  {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+                </button>
+                <span className="user-badge tenant" style={{ background: 'rgba(34, 197, 94, 0.1)', color: 'var(--color-success)', padding: '6px 12px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 600 }}>
+                  Active Agreement
+                </span>
+              </div>
+            </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <div style={{ height: '8px', background: '#334155', borderRadius: '4px', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', background: 'var(--color-primary)', width: `${(simLatestBill.paidAmount / simLatestBill.totalAmount) * 100}%` }}></div>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: '#94A3B8' }}>
-                      <span>{Math.round((simLatestBill.paidAmount / simLatestBill.totalAmount) * 100)}% Paid (₹{simLatestBill.paidAmount} settled)</span>
-                      <span>Total Invoice: ₹{simLatestBill.totalAmount}</span>
-                    </div>
-                  </div>
+            <div className="content-body">
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '16px', marginTop: '8px' }}>
-                    <span style={{ fontSize: '0.85rem', color: '#94A3B8' }}>Payment Due by: <strong>{simLatestBill.dueDate}</strong></span>
-                    {simLatestBill.pendingAmount > 0 && (
-                      <button className="btn-primary" style={{ padding: '12px 24px', borderRadius: '24px' }} onClick={handleSimPayBill}>
-                        💳 Settle UPI Payment
-                      </button>
+            {/* VIEW 1: HOME (Overview Dashboard) */}
+            {simActiveTab === 'home' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                  <div>
+                    <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '6px' }}>Welcome back, {simTenantData?.name || 'Tenant'}</h1>
+                    <p style={{ color: 'var(--text-secondary)' }}>Here is a quick summary of your rental space status and upcoming dues.</p>
+                  </div>
+                </div>
+
+                {/* Quick stats grid */}
+                <div className="properties-grid" style={{ marginBottom: '24px', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+                  <div className="card" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Agreement Status</span>
+                    <span style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--color-success)' }}>Active</span>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Ends in {simTenantData?.agreementDuration} months</span>
+                  </div>
+                  <div className="card" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Monthly Rent</span>
+                    <span style={{ fontSize: '1.25rem', fontWeight: 800 }}>₹{simTenantData?.rentAmount}</span>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Due on 5th of each month</span>
+                  </div>
+                  <div className="card" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Security Deposit</span>
+                    <span style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--color-primary)' }}>₹{simTenantData?.securityDeposit}</span>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Refundable at checkout</span>
+                  </div>
+                  <div className="card" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Landlord Details</span>
+                    <span style={{ fontSize: '1.1rem', fontWeight: 800 }}>Sandeep Kumar</span>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Phone: 9999999999</span>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px' }}>
+                  {/* Left part: Premium Invoice Card */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                    {simLatestBill ? (
+                      <div className="card" style={{ padding: '24px', background: 'linear-gradient(135deg, #1E1B4B 0%, #312E81 100%)', color: 'white', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <span style={{ fontSize: '0.85rem', color: '#94A3B8', fontWeight: 600 }}>OUTSTANDING BALANCE ({simLatestBill.billingMonth})</span>
+                            <h2 style={{ fontSize: '2.8rem', fontWeight: 900, color: '#FFF' }}>₹{simLatestBill.pendingAmount}</h2>
+                          </div>
+                          <span className="badge" style={{ background: simLatestBill.status === 'Paid' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)', color: simLatestBill.status === 'Paid' ? '#4ADE80' : '#FCA5A5' }}>
+                            {simLatestBill.status}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <div style={{ height: '8px', background: '#334155', borderRadius: '4px', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', background: 'var(--color-primary)', width: `${(simLatestBill.paidAmount / simLatestBill.totalAmount) * 100}%` }}></div>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: '#94A3B8' }}>
+                            <span>{Math.round((simLatestBill.paidAmount / simLatestBill.totalAmount) * 100)}% Paid (₹{simLatestBill.paidAmount} settled)</span>
+                            <span>Total Invoice: ₹{simLatestBill.totalAmount}</span>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '16px', marginTop: '8px' }}>
+                          <span style={{ fontSize: '0.85rem', color: '#94A3B8' }}>Payment Due by: <strong>{simLatestBill.dueDate}</strong></span>
+                          {simLatestBill.pendingAmount > 0 && (
+                            <button className="btn-primary" style={{ padding: '12px 24px', borderRadius: '24px' }} onClick={handleSimPayBill}>
+                              💳 Settle UPI Payment
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="card" style={{ padding: '32px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <span style={{ fontSize: '2rem' }}>🎉</span>
+                        <h4 style={{ margin: 0, fontSize: '1.1rem' }}>No pending invoices for this month! All settled.</h4>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>You are fully up to date on your rent payments.</p>
+                      </div>
                     )}
                   </div>
-                </div>
-              ) : (
-                <div className="card" style={{ padding: '24px', textAlign: 'center' }}>
-                  <h4>No pending invoices for this month! All settled. 🎉</h4>
-                </div>
-              )}
 
-              {/* Invoices List */}
-              <div className="card" style={{ padding: '24px' }}>
-                <h3 style={{ marginBottom: '16px' }}>Invoice & Payments Ledger</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {/* Right part: Notice Board Preview */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <div className="card" style={{ padding: '20px' }}>
+                      <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        📢 Latest Announcement
+                      </h4>
+                      {announcements.length > 0 ? (
+                        <div style={{ padding: '12px', background: 'var(--bg-app)', borderRadius: '12px', borderLeft: '3px solid var(--color-primary)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                            <span className="badge info" style={{ fontSize: '0.6rem' }}>{announcements[0].category}</span>
+                            <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{new Date(announcements[0].createdAt).toLocaleDateString()}</span>
+                          </div>
+                          <h5 style={{ margin: '0 0 4px 0', fontSize: '0.85rem', fontWeight: 'bold' }}>{announcements[0].title}</h5>
+                          <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}>
+                            {announcements[0].message}
+                          </p>
+                        </div>
+                      ) : (
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>No announcements from the landlord yet.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 2: BILLS (My Invoices & Bills) */}
+            {simActiveTab === 'bills' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                  <div>
+                    <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '6px' }}>My Invoices & Bills</h1>
+                    <p style={{ color: 'var(--text-secondary)' }}>View, track, and pay your monthly utility and rent invoices.</p>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   {bills.filter(b => b.tenantId === simTenantData?.id).map(b => (
-                    <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid var(--border-color)', padding: '16px', borderRadius: '16px' }}>
-                      <div>
-                        <h4 style={{ fontSize: '1rem', marginBottom: '4px' }}>{b.billingMonth} Bill</h4>
+                    <div key={b.id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px', gap: '16px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <h4 style={{ fontSize: '1.1rem', margin: 0, fontWeight: 700 }}>{b.billingMonth} Bill</h4>
+                          <span className={`badge ${b.status === 'Paid' ? 'success' : 'warning'}`}>{b.status}</span>
+                        </div>
                         <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                          Rent: ₹{b.rentAmount} • Elec: ₹{b.electricityAmount} ({b.electricityUnits} u) • Water: ₹{b.waterCharges}
+                          Base Rent: ₹{b.rentAmount} • Electricity: ₹{b.electricityAmount} ({b.electricityUnits || ((b.currMeterReading || 0) - (b.prevMeterReading || 0))} units) • Water Fix: ₹{b.waterCharges}
                         </span>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                        <span style={{ fontWeight: 700 }}>₹{b.totalAmount}</span>
-                        <span className={`badge ${b.status === 'Paid' ? 'success' : 'warning'}`}>{b.status}</span>
-                        {b.paidAmount > 0 && (
-                          <button className="dev-btn" style={{ fontSize: '0.75rem', padding: '6px 12px' }} onClick={() => alert("Downloaded PDF Receipt for " + b.billingMonth)}>
-                            Download Receipt
-                          </button>
-                        )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                        <div style={{ textAlign: 'right' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>Total Invoiced</span>
+                          <span style={{ fontSize: '1.25rem', fontWeight: 800 }}>₹{b.totalAmount}</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          {b.pendingAmount > 0 && (
+                            <button className="btn-primary" style={{ padding: '8px 16px', fontSize: '0.85rem' }} onClick={handleSimPayBill}>
+                              Settle Bill
+                            </button>
+                          )}
+                          {b.paidAmount > 0 && (
+                            <button className="dev-btn" style={{ padding: '8px 16px', fontSize: '0.85rem' }} onClick={() => alert("Downloaded PDF Receipt for " + b.billingMonth)}>
+                              Download Receipt
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
                   {bills.filter(b => b.tenantId === simTenantData?.id).length === 0 && (
-                    <p style={{ color: 'var(--text-muted)', textAlign: 'center' }}>No billing history found.</p>
+                    <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
+                      <p style={{ color: 'var(--text-muted)', margin: 0 }}>No billing history found.</p>
+                    </div>
                   )}
                 </div>
               </div>
+            )}
 
-              {/* Maintenance Tickets & Concerns */}
-              <div className="card" style={{ padding: '24px' }}>
-                <h3 style={{ marginBottom: '16px' }}>Maintenance Concerns & Tickets</h3>
-                
-                {/* Form to submit concern */}
-                <form onSubmit={handleSimSubmitComment} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px', borderBottom: '1px solid var(--border-color)', paddingBottom: '24px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Category</label>
-                    <select className="input-field" value={simCommentCategory} onChange={(e) => setSimCommentCategory(e.target.value)}>
-                      <option value="Maintenance">General Maintenance</option>
-                      <option value="Plumbing">Plumbing Leakage</option>
-                      <option value="Electrical">Electric/Power Outage</option>
-                    </select>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Ticket Title</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. Broken sink pipe" 
-                      className="input-field" 
-                      value={simNewCommentTitle}
-                      onChange={(e) => setSimNewCommentTitle(e.target.value)}
-                    />
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', gridColumn: 'span 2' }}>
-                    <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Issue Description</label>
-                    <textarea 
-                      placeholder="Describe the issue in detail so the owner can review..." 
-                      className="input-field" 
-                      style={{ height: '80px' }}
-                      value={simNewCommentBody}
-                      onChange={(e) => setSimNewCommentBody(e.target.value)}
-                    />
-                    <button type="submit" className="btn-primary" style={{ alignSelf: 'flex-end', padding: '10px 20px', borderRadius: '24px', fontSize: '0.9rem' }}>
-                      Log Concern Ticket
+            {/* VIEW 3: LEDGER (Ledger Statement) */}
+            {simActiveTab === 'ledger' && (() => {
+              const tenantBills = bills.filter(b => b.tenantId === simTenantData?.id);
+              const txs = [];
+              tenantBills.forEach(b => {
+                txs.push({
+                  date: b.dueDate || new Date().toISOString().split('T')[0],
+                  type: 'Invoice',
+                  description: `Monthly Rent Invoice - ${b.billingMonth}`,
+                  amount: b.totalAmount,
+                  change: b.totalAmount
+                });
+                if (b.payments && Array.isArray(b.payments)) {
+                  b.payments.forEach(p => {
+                    txs.push({
+                      date: p.date || new Date().toISOString().split('T')[0],
+                      type: 'Receipt',
+                      description: `Rent payment received [${p.method}] ${p.note ? ` - ${p.note}` : ''}`,
+                      amount: p.amount,
+                      change: -p.amount
+                    });
+                  });
+                }
+              });
+
+              txs.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+              let currentBalance = 0;
+              const ledgerRows = txs.map(tx => {
+                currentBalance += tx.change;
+                return {
+                  ...tx,
+                  balance: currentBalance
+                };
+              });
+
+              const totalInvoiceSum = tenantBills.reduce((s, b) => s + b.totalAmount, 0);
+              const totalReceiptSum = tenantBills.reduce((s, b) => s + b.paidAmount, 0);
+              const totalBalanceDues = totalInvoiceSum - totalReceiptSum;
+
+              return (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                    <div>
+                      <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '6px' }}>Ledger Statement</h1>
+                      <p style={{ color: 'var(--text-secondary)' }}>Full transactional history of debits and credits linked to your tenancy account.</p>
+                    </div>
+                    <button className="dev-btn" onClick={() => triggerToast("📥 PDF statement generated successfully.")}>
+                      Print Statement
                     </button>
                   </div>
-                </form>
 
-                {/* List of active tickets */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  {comments.filter(c => c.tenantId === simTenantData?.id).map(c => (
-                    <div key={c.id} style={{ border: '1px solid var(--border-color)', padding: '16px', borderRadius: '16px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                        <div>
-                          <span className="badge" style={{ marginRight: '8px' }}>{c.category}</span>
-                          <strong style={{ fontSize: '1.05rem' }}>{c.title}</strong>
-                        </div>
-                        <span className={`badge ${c.status === 'Resolved' ? 'success' : 'warning'}`}>{c.status}</span>
-                      </div>
-                      
-                      {/* Ticket replies list */}
-                      <div style={{ background: 'var(--bg-app)', padding: '12px', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
-                        {c.replies?.map(r => (
-                          <div key={r.id} style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                              <strong>{r.sender === 'tenant' ? 'You' : 'Landlord'}</strong>
-                              <span>{new Date(r.createdAt).toLocaleString()}</span>
-                            </div>
-                            <p style={{ fontSize: '0.85rem' }}>{r.message}</p>
-                          </div>
-                        ))}
-                        
-                        {/* Reply input for ticket */}
-                        <div style={{ marginTop: '8px' }}>
-                          <input 
-                            type="text" 
-                            placeholder="Type a reply to landlord..." 
-                            className="input-field" 
-                            style={{ padding: '8px 12px', fontSize: '0.8rem', borderRadius: '16px' }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                handleSimCommentReply(c.id, e.target.value);
-                                e.target.value = '';
-                              }
-                            }}
-                          />
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', marginTop: '4px', marginLeft: '6px' }}>Press Enter to send reply</span>
-                        </div>
-                      </div>
+                  {/* Summary Metric Cards */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+                    <div className="card" style={{ padding: '20px', background: 'var(--bg-app)', textAlign: 'center' }}>
+                      <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Invoiced</label>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 800, marginTop: '4px' }}>₹{totalInvoiceSum}</div>
                     </div>
-                  ))}
-                  {comments.filter(c => c.tenantId === simTenantData?.id).length === 0 && (
-                    <p style={{ color: 'var(--text-muted)', textAlign: 'center' }}>No active concern tickets logged.</p>
-                  )}
-                </div>
-
-              </div>
-
-            </div>
-
-            {/* RIGHT COLUMN: RENTAL INFO & CHAT */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-              
-              {/* Rental Contract details */}
-              {simTenantData && (
-                <div className="card" style={{ padding: '24px' }}>
-                  <h3 style={{ marginBottom: '16px' }}>Rental Contract Details</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '0.9rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>Aadhaar Number</span>
-                      <span style={{ fontWeight: 600 }}>{simTenantData.aadhaar} (Verified ✅)</span>
+                    <div className="card" style={{ padding: '20px', background: 'var(--bg-app)', textAlign: 'center' }}>
+                      <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Settled</label>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--color-success)', marginTop: '4px' }}>₹{totalReceiptSum}</div>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>PAN Card Status</span>
-                      <span style={{ fontWeight: 600 }}>{simTenantData.pan} (Verified ✅)</span>
+                    <div className="card" style={{ padding: '20px', background: 'var(--bg-app)', textAlign: 'center' }}>
+                      <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Outstanding Balance</label>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 800, color: totalBalanceDues > 0 ? 'var(--color-danger)' : 'inherit', marginTop: '4px' }}>₹{totalBalanceDues}</div>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>Security Deposit</span>
-                      <span style={{ fontWeight: 600 }}>₹{simTenantData.securityDeposit}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>Monthly Rent Cycle</span>
-                      <span style={{ fontWeight: 600 }}>₹{simTenantData.rentAmount}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>Electricity Unit Rate</span>
-                      <span style={{ fontWeight: 600 }}>₹{simTenantData.electricityRate}/unit</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>Water Fix Charges</span>
-                      <span style={{ fontWeight: 600 }}>₹{simTenantData.waterCharges}/mo</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>Agreement Term</span>
-                      <span style={{ fontWeight: 600 }}>{simTenantData.agreementDuration} Months</span>
+                    <div className="card" style={{ padding: '20px', background: 'var(--bg-app)', textAlign: 'center' }}>
+                      <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Security Deposit (Held)</label>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--color-primary)', marginTop: '4px' }}>₹{simTenantData?.securityDeposit}</div>
                     </div>
                   </div>
-                </div>
-              )}
 
-              {/* Chat Panel */}
-              <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', height: '550px' }}>
-                <h3 style={{ marginBottom: '16px' }}>Chat with Landlord</h3>
-                
-                {/* Messages body */}
-                <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', padding: '12px', background: 'var(--bg-app)', borderRadius: '16px', marginBottom: '16px' }}>
-                  {simChatMessages.map(m => (
-                    <div key={m.id} style={{
-                      alignSelf: m.sender === 'tenant' ? 'flex-end' : 'flex-start',
-                      background: m.sender === 'tenant' ? 'var(--color-primary)' : 'var(--bg-card)',
-                      color: m.sender === 'tenant' ? 'white' : 'var(--text-primary)',
-                      padding: '10px 14px',
-                      borderRadius: '16px',
-                      maxWidth: '85%',
-                      fontSize: '0.85rem',
-                      border: m.sender !== 'tenant' ? '1px solid var(--border-color)' : 'none',
-                      boxShadow: 'var(--shadow-premium)'
-                    }}>
-                      <p>{m.text}</p>
+                  {/* Ledger Table */}
+                  <div className="card" style={{ padding: '0px', overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid var(--border-color)', color: 'var(--text-secondary)' }}>
+                          <th style={{ padding: '12px 16px' }}>Date</th>
+                          <th style={{ padding: '12px' }}>Type</th>
+                          <th style={{ padding: '12px' }}>Description</th>
+                          <th style={{ padding: '12px', textAlign: 'right' }}>Debit (Invoice)</th>
+                          <th style={{ padding: '12px', textAlign: 'right' }}>Credit (Paid)</th>
+                          <th style={{ padding: '12px 16px', textAlign: 'right' }}>Balance Due</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ledgerRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                              No transactions recorded in this ledger statement yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          ledgerRows.map((row, idx) => (
+                            <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                              <td style={{ padding: '12px 16px' }}>{row.date}</td>
+                              <td style={{ padding: '12px' }}>
+                                <span className={`badge ${row.type === 'Invoice' ? 'danger' : 'success'}`} style={{ fontSize: '0.65rem' }}>
+                                  {row.type}
+                                </span>
+                              </td>
+                              <td style={{ padding: '12px', color: 'var(--text-primary)' }}>{row.description}</td>
+                              <td style={{ padding: '12px', textAlign: 'right', fontWeight: row.type === 'Invoice' ? 'bold' : 'normal' }}>
+                                {row.type === 'Invoice' ? `₹${row.amount}` : '-'}
+                              </td>
+                              <td style={{ padding: '12px', textAlign: 'right', fontWeight: row.type === 'Receipt' ? 'bold' : 'normal', color: row.type === 'Receipt' ? 'var(--color-success)' : 'inherit' }}>
+                                {row.type === 'Receipt' ? `₹${row.amount}` : '-'}
+                              </td>
+                              <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 'bold' }}>
+                                ₹{row.balance}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* VIEW 4: NOTICES (Notice Board) */}
+            {simActiveTab === 'notices' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                  <div>
+                    <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '6px' }}>Notice Board</h1>
+                    <p style={{ color: 'var(--text-secondary)' }}>Announcements, water supply logs, and maintenance warnings from the landlord.</p>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {announcements.length === 0 ? (
+                    <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
+                      <p style={{ color: 'var(--text-muted)', margin: 0 }}>No active notices from the landlord.</p>
                     </div>
-                  ))}
-                  {simChatMessages.length === 0 && (
-                    <p style={{ color: 'var(--text-muted)', textAlign: 'center', marginTop: '40px' }}>Send a message to start chatting with your landlord.</p>
+                  ) : (
+                    announcements.map(ann => (
+                      <div key={ann.id} className="card" style={{ padding: '24px', borderLeft: '4px solid var(--color-primary)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <span className="badge info">{ann.category}</span>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                            {new Date(ann.createdAt).toLocaleString()}
+                          </span>
+                        </div>
+                        <h3 style={{ fontSize: '1.25rem', margin: '0 0 10px 0', fontWeight: 700 }}>{ann.title}</h3>
+                        <p style={{ margin: 0, whiteSpace: 'pre-wrap', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                          {ann.message}
+                        </p>
+                      </div>
+                    ))
                   )}
                 </div>
-
-                {/* Input form */}
-                <form onSubmit={handleSimSendChat} style={{ display: 'flex', gap: '8px' }}>
-                  <input 
-                    type="text" 
-                    placeholder="Type a message to landlord..." 
-                    className="input-field" 
-                    style={{ borderRadius: '24px', padding: '10px 18px', flexGrow: 1 }}
-                    value={simChatText}
-                    onChange={(e) => setSimChatText(e.target.value)}
-                  />
-                  <button type="submit" className="btn-primary" style={{ padding: '10px 14px', borderRadius: '50%' }}>
-                    <Send size={16} />
-                  </button>
-                </form>
               </div>
+            )}
 
-            </div>
+            {/* VIEW 5: TICKETS (Maintenance Concerns & Tickets) */}
+            {simActiveTab === 'tickets' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                  <div>
+                    <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '6px' }}>Maintenance Concerns & Tickets</h1>
+                    <p style={{ color: 'var(--text-secondary)' }}>Log issues like plumbing leakages or electrical failure and chat directly with maintenance operators.</p>
+                  </div>
+                </div>
 
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '24px', alignItems: 'start' }}>
+                  {/* Left side: log form */}
+                  <form onSubmit={handleSimSubmitComment} className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Log New Maintenance Ticket</h3>
+                    
+                    <div className="form-group">
+                      <label>Category</label>
+                      <select className="input-field" value={simCommentCategory} onChange={(e) => setSimCommentCategory(e.target.value)}>
+                        <option value="Maintenance">General Maintenance</option>
+                        <option value="Plumbing">Plumbing Leakage</option>
+                        <option value="Electrical">Electric/Power Outage</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Ticket Title</label>
+                      <input 
+                        type="text" 
+                        required
+                        placeholder="e.g. Broken sink pipe" 
+                        className="input-field" 
+                        value={simNewCommentTitle}
+                        onChange={(e) => setSimNewCommentTitle(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label>Describe the concern</label>
+                      <textarea 
+                        required
+                        placeholder="Provide details of the problem..." 
+                        className="input-field" 
+                        style={{ height: '100px' }}
+                        value={simNewCommentBody}
+                        onChange={(e) => setSimNewCommentBody(e.target.value)}
+                      />
+                    </div>
+
+                    <button type="submit" className="btn-primary" style={{ padding: '12px' }}>
+                      Log Concern Ticket
+                    </button>
+                  </form>
+
+                  {/* Right side: ticket history list */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {comments.filter(c => c.tenantId === simTenantData?.id).map(c => (
+                      <div key={c.id} className="card" style={{ padding: '20px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                          <div>
+                            <span className="badge" style={{ marginRight: '8px' }}>{c.category}</span>
+                            <strong style={{ fontSize: '1.05rem' }}>{c.title}</strong>
+                          </div>
+                          <span className={`badge ${c.status === 'Resolved' ? 'success' : 'warning'}`}>{c.status}</span>
+                        </div>
+                        
+                        <div style={{ background: 'var(--bg-app)', padding: '12px', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
+                          {c.replies?.map(r => (
+                            <div key={r.id} style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                                <strong>{r.sender === 'tenant' ? 'You' : 'Landlord'}</strong>
+                                <span>{new Date(r.createdAt).toLocaleString()}</span>
+                              </div>
+                              <p style={{ fontSize: '0.85rem', margin: 0 }}>{r.message}</p>
+                            </div>
+                          ))}
+                          
+                          <div style={{ marginTop: '8px' }}>
+                            <input 
+                              type="text" 
+                              placeholder="Type a reply to landlord..." 
+                              className="input-field" 
+                              style={{ padding: '8px 12px', fontSize: '0.8rem', borderRadius: '16px' }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  handleSimCommentReply(c.id, e.target.value);
+                                  e.target.value = '';
+                                }
+                              }}
+                            />
+                            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', marginTop: '4px', marginLeft: '6px' }}>Press Enter to send reply</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {comments.filter(c => c.tenantId === simTenantData?.id).length === 0 && (
+                      <div className="card" style={{ padding: '30px', textAlign: 'center' }}>
+                        <p style={{ color: 'var(--text-muted)', margin: 0 }}>No active concern tickets logged.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 6: CHAT (Landlord Chat) */}
+            {simActiveTab === 'chat' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                  <div>
+                    <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '6px' }}>Landlord Chat</h1>
+                    <p style={{ color: 'var(--text-secondary)' }}>Instant messages with your property manager.</p>
+                  </div>
+                </div>
+
+                <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', height: '600px' }}>
+                  <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', padding: '12px', background: 'var(--bg-app)', borderRadius: '16px', marginBottom: '16px' }}>
+                    {simChatMessages.map(m => (
+                      <div key={m.id} style={{
+                        alignSelf: m.sender === 'tenant' ? 'flex-end' : 'flex-start',
+                        background: m.sender === 'tenant' ? 'var(--color-primary)' : 'var(--bg-card)',
+                        color: m.sender === 'tenant' ? 'white' : 'var(--text-primary)',
+                        padding: '10px 14px',
+                        borderRadius: '16px',
+                        maxWidth: '75%',
+                        fontSize: '0.85rem',
+                        border: m.sender !== 'tenant' ? '1px solid var(--border-color)' : 'none',
+                        boxShadow: 'var(--shadow-premium)'
+                      }}>
+                        <p style={{ margin: 0 }}>{m.text}</p>
+                      </div>
+                    ))}
+                    {simChatMessages.length === 0 && (
+                      <p style={{ color: 'var(--text-muted)', textAlign: 'center', marginTop: '40px' }}>Send a message to start chatting with your landlord.</p>
+                    )}
+                  </div>
+
+                  <form onSubmit={handleSimSendChat} style={{ display: 'flex', gap: '8px' }}>
+                    <input 
+                      type="text" 
+                      placeholder="Type a message to landlord..." 
+                      className="input-field" 
+                      style={{ borderRadius: '24px', padding: '10px 18px', flexGrow: 1 }}
+                      value={simChatText}
+                      onChange={(e) => setSimChatText(e.target.value)}
+                    />
+                    <button type="submit" className="btn-primary" style={{ padding: '10px 16px', borderRadius: '50%' }}>
+                      <Send size={16} />
+                    </button>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW 7: PROFILE (Rental Profile) */}
+            {simActiveTab === 'profile' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                  <div>
+                    <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '6px' }}>Rental Profile</h1>
+                    <p style={{ color: 'var(--text-secondary)' }}>Full details of your rental agreement and check-in configuration.</p>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '24px', alignItems: 'start' }}>
+                  {/* Photo card */}
+                  <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                    <img src={simTenantData?.photo || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=120"} alt={simTenantData?.name} style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid var(--color-primary)' }} />
+                    <h3 style={{ margin: 0 }}>{simTenantData?.name}</h3>
+                    <span className="badge success">{simTenantData?.occupation || 'Tenant'}</span>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Email: {simTenantData?.email}</span>
+                  </div>
+
+                  {/* Contract breakdown */}
+                  <div className="card" style={{ padding: '24px' }}>
+                    <h3 style={{ margin: '0 0 16px 0', fontSize: '1.1rem' }}>Rental Contract Details</h3>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '0.9rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Aadhaar Number</span>
+                        <span style={{ fontWeight: 600 }}>{simTenantData?.aadhaar} (Verified ✅)</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>PAN Card Status</span>
+                        <span style={{ fontWeight: 600 }}>{simTenantData?.pan} (Verified ✅)</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Security Deposit</span>
+                        <span style={{ fontWeight: 600 }}>₹{simTenantData?.securityDeposit}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Monthly Rent Cycle</span>
+                        <span style={{ fontWeight: 600 }}>₹{simTenantData?.rentAmount}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Electricity Unit Rate</span>
+                        <span style={{ fontWeight: 600 }}>₹{simTenantData?.electricityRate}/unit</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Water Fix Charges</span>
+                        <span style={{ fontWeight: 600 }}>₹{simTenantData?.waterCharges}/mo</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Agreement Term</span>
+                        <span style={{ fontWeight: 600 }}>{simTenantData?.agreementDuration} Months</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Checked-In Date</span>
+                        <span style={{ fontWeight: 600 }}>{simTenantData?.moveInDate}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Documents Upload & Update Card */}
+                  {simTenantData && (() => {
+                    const openDoc = async (docUrl, docName) => {
+                      if (!docUrl) return;
+                      if (docUrl.startsWith('http')) {
+                        window.open(docUrl, '_blank');
+                        return;
+                      }
+                      try {
+                        const res = await fetch(`${API_BASE}/documents/signed-url/${docUrl}`, {
+                          headers: {
+                            'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
+                          }
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.url) {
+                          window.open(data.url, '_blank');
+                        } else {
+                          triggerToast(`❌ Error: ${data.message || 'Unknown error'}`);
+                        }
+                      } catch (err) {
+                        triggerToast(`❌ Error: ${err.message}`);
+                      }
+                    };
+
+                    return (
+                      <div className="card" style={{ padding: '24px', gridColumn: '1 / -1' }}>
+                        <h3 style={{ margin: '0 0 16px 0', fontSize: '1.15rem' }}>📂 Verify & Upload Documents (Google Drive Storage)</h3>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px' }}>
+                          Upload your verification documents directly to the landlord's secure storage space. Supported formats: PDF, JPG, JPEG, PNG, WEBP (Max 10MB).
+                        </p>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                          {[
+                            { key: 'profilePhoto', label: 'Profile Photo (JPG/PNG)', isPhoto: true },
+                            { key: 'aadhaar', label: 'Aadhaar Card (Front/Back PDF or Image)' },
+                            { key: 'pan', label: 'PAN Card (PDF or Image)' },
+                            { key: 'agreement', label: 'Rental Agreement Copy (PDF)' }
+                          ].map((docItem) => {
+                            const docUrl = docItem.isPhoto ? simTenantData.photo : (simTenantData.documents?.[docItem.key]);
+                            const isUploaded = !!docUrl;
+
+                            const handleFileChange = async (e) => {
+                              const file = e.target.files[0];
+                              if (!file) return;
+
+                              const formData = new FormData();
+                              formData.append('document', file);
+
+                              triggerToast(`📤 Uploading ${docItem.label}...`);
+                              try {
+                                const uploadRes = await fetch(`${API_BASE}/documents/upload`, {
+                                  method: 'POST',
+                                  headers: {
+                                    'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
+                                  },
+                                  body: formData
+                                });
+                                const uploadData = await uploadRes.json();
+                                if (!uploadRes.ok) {
+                                  throw new Error(uploadData.message || 'Upload failed');
+                                }
+
+                                const docLink = uploadData.filename;
+
+                                // Update tenant profile
+                                const updatePayload = docItem.isPhoto 
+                                  ? { photo: docLink }
+                                  : { documents: { [docItem.key]: docLink } };
+
+                                const saveRes = await fetch(`${API_BASE}/tenants/${simTenantData.id}/documents`, {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
+                                  },
+                                  body: JSON.stringify(updatePayload)
+                                });
+                                const saveData = await saveRes.json();
+                                if (!saveRes.ok) {
+                                  throw new Error(saveData.message || 'Failed to update profile');
+                                }
+
+                                triggerToast(`✅ ${docItem.label} updated successfully!`);
+                                fetchAllData(); // Refresh UI values
+                              } catch (err) {
+                                triggerToast(`❌ Error: ${err.message}`);
+                                console.error(err);
+                              }
+                            };
+
+                            return (
+                              <div key={docItem.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid var(--border-color)', padding: '16px', borderRadius: '16px', gap: '16px' }}>
+                                <div>
+                                  <h4 style={{ margin: '0 0 4px 0', fontSize: '0.95rem' }}>{docItem.label}</h4>
+                                  {isUploaded ? (
+                                    <span onClick={() => openDoc(docUrl, docItem.label)} style={{ fontSize: '0.85rem', color: 'var(--color-primary)', textDecoration: 'underline', cursor: 'pointer' }}>
+                                      View Uploaded Document ↗
+                                    </span>
+                                  ) : (
+                                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No document uploaded</span>
+                                  )}
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                  <span className={`badge ${isUploaded ? 'success' : 'warning'}`} style={{ fontSize: '0.75rem' }}>
+                                    {isUploaded ? 'Active' : 'Required'}
+                                  </span>
+                                  <label className="btn-primary" style={{ fontSize: '0.85rem', padding: '8px 16px', cursor: 'pointer', borderRadius: '8px' }}>
+                                    Select & Upload
+                                    <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={handleFileChange} />
+                                  </label>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+            </div> {/* Closing content-body */}
           </div>
-
         </div>
       ))}
 
@@ -2300,28 +3628,165 @@ export default function App() {
 
                   {/* TAB 2: BILLS */}
                   {simActiveTab === 'bills' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      {bills.filter(b => b.tenantId === simTenantData.id).map(b => (
-                        <div key={b.id} style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', padding: '14px', borderRadius: '16px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                            <span style={{ fontWeight: 700, fontSize: '0.85rem' }}>{b.billingMonth}</span>
-                            <span className={`badge ${b.status === 'Paid' ? 'success' : 'warning'}`} style={{ fontSize: '0.65rem' }}>{b.status}</span>
-                          </div>
-                          
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <span>Rent Base: ₹{b.rentAmount}</span>
-                            <span>Electricity Usage: ₹{b.electricityAmount} ({b.electricityUnits} units)</span>
-                            <span>Water fix charges: ₹{b.waterCharges}</span>
-                            <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>Total Settle Bill: ₹{b.totalAmount}</span>
-                          </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      {/* Sub tab toggle */}
+                      <div style={{ display: 'flex', gap: '8px', background: 'var(--bg-app)', padding: '4px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+                        <button 
+                          className="tab-btn" 
+                          style={{ 
+                            flexGrow: 1, 
+                            padding: '6px', 
+                            fontSize: '0.75rem', 
+                            borderRadius: '8px',
+                            background: simBillsSubTab === 'list' ? 'var(--color-primary)' : 'transparent',
+                            color: simBillsSubTab === 'list' ? 'white' : 'var(--text-secondary)'
+                          }} 
+                          onClick={() => setSimBillsSubTab('list')}
+                        >
+                          Invoices List
+                        </button>
+                        <button 
+                          className="tab-btn" 
+                          style={{ 
+                            flexGrow: 1, 
+                            padding: '6px', 
+                            fontSize: '0.75rem', 
+                            borderRadius: '8px',
+                            background: simBillsSubTab === 'ledger' ? 'var(--color-primary)' : 'transparent',
+                            color: simBillsSubTab === 'ledger' ? 'white' : 'var(--text-secondary)'
+                          }} 
+                          onClick={() => setSimBillsSubTab('ledger')}
+                        >
+                          Ledger Statement
+                        </button>
+                      </div>
 
-                          {b.paidAmount > 0 && (
-                            <button className="dev-btn" style={{ fontSize: '0.7rem', padding: '4px 6px', marginTop: '10px' }} onClick={() => alert("Downloaded PDF Receipt for " + b.billingMonth)}>
-                              Download Receipt
-                            </button>
-                          )}
+                      {simBillsSubTab === 'list' ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          {bills.filter(b => b.tenantId === simTenantData.id).map(b => (
+                            <div key={b.id} style={{ border: '1px solid var(--border-color)', background: 'var(--bg-card)', padding: '14px', borderRadius: '16px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                <span style={{ fontWeight: 700, fontSize: '0.85rem' }}>{b.billingMonth}</span>
+                                <span className={`badge ${b.status === 'Paid' ? 'success' : 'warning'}`} style={{ fontSize: '0.65rem' }}>{b.status}</span>
+                              </div>
+                              
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <span>Rent Base: ₹{b.rentAmount}</span>
+                                <span>Electricity: ₹{b.electricityAmount} ({b.electricityUnits || ((b.currMeterReading || 0) - (b.prevMeterReading || 0))} units)</span>
+                                <span>Water charges: ₹{b.waterCharges}</span>
+                                <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>Total Settle Bill: ₹{b.totalAmount}</span>
+                              </div>
+
+                              <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                                {b.pendingAmount > 0 && (
+                                  <button className="btn-primary" style={{ fontSize: '0.7rem', padding: '6px 10px' }} onClick={handleSimPayBill}>
+                                    Pay Now
+                                  </button>
+                                )}
+                                {b.paidAmount > 0 && (
+                                  <button className="dev-btn" style={{ fontSize: '0.7rem', padding: '6px 10px' }} onClick={() => alert("Downloaded PDF Receipt for " + b.billingMonth)}>
+                                    Download Receipt
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      ) : (() => {
+                        const tenantBills = bills.filter(b => b.tenantId === simTenantData.id);
+                        
+                        const txs = [];
+                        tenantBills.forEach(b => {
+                          txs.push({
+                            date: b.dueDate || new Date().toISOString().split('T')[0],
+                            type: 'Invoice',
+                            description: `Monthly Rent Invoice - ${b.billingMonth}`,
+                            amount: b.totalAmount,
+                            change: b.totalAmount
+                          });
+                          
+                          if (b.payments && Array.isArray(b.payments)) {
+                            b.payments.forEach(p => {
+                              txs.push({
+                                date: p.date || new Date().toISOString().split('T')[0],
+                                type: 'Receipt',
+                                description: `Rent payment received [${p.method}] ${p.note ? ` - ${p.note}` : ''}`,
+                                amount: p.amount,
+                                change: -p.amount
+                              });
+                            });
+                          }
+                        });
+
+                        txs.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                        let currentBalance = 0;
+                        const ledgerRows = txs.map(tx => {
+                          currentBalance += tx.change;
+                          return {
+                            ...tx,
+                            balance: currentBalance
+                          };
+                        });
+
+                        const totalInvoiceSum = tenantBills.reduce((s, b) => s + b.totalAmount, 0);
+                        const totalReceiptSum = tenantBills.reduce((s, b) => s + b.paidAmount, 0);
+                        const totalBalanceDues = totalInvoiceSum - totalReceiptSum;
+
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                              <div className="card" style={{ padding: '10px', textAlign: 'center', background: 'var(--bg-app)' }}>
+                                <label style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Total Invoiced</label>
+                                <div style={{ fontSize: '0.9rem', fontWeight: 800 }}>₹{totalInvoiceSum}</div>
+                              </div>
+                              <div className="card" style={{ padding: '10px', textAlign: 'center', background: 'var(--bg-app)' }}>
+                                <label style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Net Outstanding</label>
+                                <div style={{ fontSize: '0.9rem', fontWeight: 800, color: totalBalanceDues > 0 ? 'var(--color-danger)' : 'inherit' }}>₹{totalBalanceDues}</div>
+                              </div>
+                            </div>
+
+                            <div className="card" style={{ padding: '0px', overflowX: 'auto', borderRadius: '12px' }}>
+                              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.7rem' }}>
+                                <thead>
+                                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)', background: 'var(--bg-app)' }}>
+                                    <th style={{ padding: '8px 10px' }}>Date</th>
+                                    <th style={{ padding: '8px 10px' }}>Type</th>
+                                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Amt (₹)</th>
+                                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Bal (₹)</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {ledgerRows.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={4} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                                        No ledger records found.
+                                      </td>
+                                    </tr>
+                                  ) : (
+                                    ledgerRows.map((row, idx) => (
+                                      <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                        <td style={{ padding: '8px 10px' }}>{row.date.split('-').slice(1).join('/')}</td>
+                                        <td style={{ padding: '8px 10px' }}>
+                                          <span style={{ color: row.type === 'Invoice' ? 'var(--color-danger)' : 'var(--color-success)', fontWeight: 'bold' }}>
+                                            {row.type === 'Invoice' ? 'INV' : 'PAY'}
+                                          </span>
+                                        </td>
+                                        <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>
+                                          {row.type === 'Invoice' ? `+${row.amount}` : `-${row.amount}`}
+                                        </td>
+                                        <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>
+                                          ₹{row.balance}
+                                        </td>
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
 
@@ -2362,6 +3827,35 @@ export default function App() {
                     </div>
                   )}
 
+                  {/* TAB 5: NOTICES */}
+                  {simActiveTab === 'notices' && (
+                    <div>
+                      <h3 style={{ fontSize: '1.1rem', marginBottom: '12px' }}>📢 Notice Board</h3>
+                      {announcements.length === 0 ? (
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textAlign: 'center', padding: '20px' }}>
+                          No active notices from the landlord yet.
+                        </p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          {announcements.map(ann => (
+                            <div key={ann.id} className="card" style={{ padding: '12px', background: 'var(--bg-app)', borderLeft: '3px solid var(--color-primary)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                <span className="badge info" style={{ fontSize: '0.6rem' }}>{ann.category}</span>
+                                <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                                  {new Date(ann.createdAt).toLocaleDateString()}
+                                </span>
+                              </div>
+                              <h4 style={{ fontSize: '0.85rem', margin: '0 0 4px 0', fontWeight: 700 }}>{ann.title}</h4>
+                              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: 0, whiteSpace: 'pre-wrap' }}>
+                                {ann.message}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* TAB 4: PROFILE */}
                   {simActiveTab === 'profile' && simTenantData && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -2391,6 +3885,10 @@ export default function App() {
                   <div className={`phone-nav-item ${simActiveTab === 'bills' ? 'active' : ''}`} onClick={() => setSimActiveTab('bills')}>
                     <span>🧾</span>
                     <span style={{ fontSize: '9px' }}>Bills</span>
+                  </div>
+                  <div className={`phone-nav-item ${simActiveTab === 'notices' ? 'active' : ''}`} onClick={() => setSimActiveTab('notices')}>
+                    <span>📢</span>
+                    <span style={{ fontSize: '9px' }}>Notices</span>
                   </div>
                   <div className={`phone-nav-item ${simActiveTab === 'chat' ? 'active' : ''}`} onClick={() => setSimActiveTab('chat')}>
                     <span>💬</span>
@@ -2430,6 +3928,7 @@ export default function App() {
               <div className={`wizard-step ${tenantWizardStep === 2 ? 'active' : tenantWizardStep > 2 ? 'completed' : ''}`}>2</div>
               <div className={`wizard-step ${tenantWizardStep === 3 ? 'active' : tenantWizardStep > 3 ? 'completed' : ''}`}>3</div>
               <div className={`wizard-step ${tenantWizardStep === 4 ? 'active' : tenantWizardStep > 4 ? 'completed' : ''}`}>4</div>
+              <div className={`wizard-step ${tenantWizardStep === 5 ? 'active' : tenantWizardStep > 5 ? 'completed' : ''}`}>5</div>
             </div>
 
             {/* STEP 1: Personal Details */}
@@ -2492,25 +3991,73 @@ export default function App() {
                 <h3>Section 3: Property Details Allocation</h3>
                 <div className="form-group">
                   <label>Select Property</label>
-                  <select className="input-field" value={newTenantForm.propertyId} onChange={(e) => setNewTenantForm({ ...newTenantForm, propertyId: e.target.value })}>
+                  <select 
+                    className="input-field" 
+                    value={newTenantForm.propertyId} 
+                    onChange={(e) => handleWizardPropertyChange(e.target.value)}
+                  >
                     <option value="">-- Choose building --</option>
                     {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div className="form-group">
-                    <label>Allocated Room/Shop Number</label>
-                    <input type="text" className="input-field" placeholder="e.g. 101, Shop 3" value={newTenantForm.roomNumber} onChange={(e) => setNewTenantForm({ ...newTenantForm, roomNumber: e.target.value })} />
-                  </div>
-                  <div className="form-group">
-                    <label>Room/Space Type</label>
-                    <select className="input-field" value={newTenantForm.roomType} onChange={(e) => setNewTenantForm({ ...newTenantForm, roomType: e.target.value })}>
-                      <option value="Room">Room (Residential)</option>
-                      <option value="Shop">Shop (Commercial)</option>
-                      <option value="Flat">Full Apartment/Flat</option>
-                    </select>
-                  </div>
-                </div>
+
+                {newTenantForm.propertyId && (
+                  <>
+                    {wizardRooms.length > 0 ? (
+                      <div className="form-group">
+                        <label>Select Available Room/Shop</label>
+                        <select 
+                          className="input-field" 
+                          value={newTenantForm.roomId} 
+                          onChange={(e) => handleWizardRoomChange(e.target.value)}
+                          required
+                        >
+                          <option value="">-- Choose Room/Unit --</option>
+                          {wizardRooms.map(r => (
+                            <option key={r.id} value={r.id}>
+                              {r.number} - {r.type} (Floor {r.floor}, Rent: ₹{r.rent})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <div style={{ border: '1px solid var(--border-color)', padding: '12px', borderRadius: '8px', background: 'var(--bg-app)', marginBottom: '8px' }}>
+                        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>
+                          ⚠️ No rooms configured as "Available" in this building database. Using manual input fallback.
+                        </p>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                      <div className="form-group">
+                        <label>Allocated Room/Shop Number</label>
+                        <input 
+                          type="text" 
+                          className="input-field" 
+                          placeholder="e.g. 101, Shop 3" 
+                          value={newTenantForm.roomNumber} 
+                          onChange={(e) => setNewTenantForm({ ...newTenantForm, roomNumber: e.target.value })} 
+                          disabled={wizardRooms.length > 0} 
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Room/Space Type</label>
+                        <select 
+                          className="input-field" 
+                          value={newTenantForm.roomType} 
+                          onChange={(e) => setNewTenantForm({ ...newTenantForm, roomType: e.target.value })}
+                          disabled={wizardRooms.length > 0}
+                        >
+                          <option value="Room">Room (Residential)</option>
+                          <option value="Shop">Shop (Commercial)</option>
+                          <option value="Flat">Full Apartment/Flat</option>
+                          <option value="PG Bed">PG Bed (Hostel)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </>
+                )}
+
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                   <div className="form-group">
                     <label>Move In Date</label>
@@ -2518,27 +4065,27 @@ export default function App() {
                   </div>
                   <div className="form-group">
                     <label>Agreement Duration (months)</label>
-                    <input type="number" className="input-field" placeholder="11" value={newTenantForm.agreementDuration} onChange={(e) => setNewTenantForm({ ...newTenantForm, agreementDuration: e.target.value })} />
+                    <input type="number" className="input-field" placeholder="11" value={newTenantForm.agreementDuration} onChange={(e) => setNewTenantForm({ ...newTenantForm, agreementDuration: parseInt(e.target.value) || '' })} />
                   </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                   <div className="form-group">
                     <label>Monthly Rent Amount (₹)</label>
-                    <input type="number" className="input-field" placeholder="2500" value={newTenantForm.rentAmount} onChange={(e) => setNewTenantForm({ ...newTenantForm, rentAmount: e.target.value })} />
+                    <input type="number" className="input-field" placeholder="2500" value={newTenantForm.rentAmount} onChange={(e) => setNewTenantForm({ ...newTenantForm, rentAmount: parseInt(e.target.value) || '' })} disabled={wizardRooms.length > 0} />
                   </div>
                   <div className="form-group">
                     <label>Refundable Security Deposit (₹)</label>
-                    <input type="number" className="input-field" placeholder="5000" value={newTenantForm.securityDeposit} onChange={(e) => setNewTenantForm({ ...newTenantForm, securityDeposit: e.target.value })} />
+                    <input type="number" className="input-field" placeholder="5000" value={newTenantForm.securityDeposit} onChange={(e) => setNewTenantForm({ ...newTenantForm, securityDeposit: parseInt(e.target.value) || '' })} />
                   </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                   <div className="form-group">
                     <label>Electricity Rate per unit (₹)</label>
-                    <input type="number" className="input-field" placeholder="6" value={newTenantForm.electricityRate} onChange={(e) => setNewTenantForm({ ...newTenantForm, electricityRate: e.target.value })} />
+                    <input type="number" className="input-field" placeholder="6" value={newTenantForm.electricityRate} onChange={(e) => setNewTenantForm({ ...newTenantForm, electricityRate: parseInt(e.target.value) || '' })} disabled={wizardRooms.length > 0} />
                   </div>
                   <div className="form-group">
                     <label>Fixed Water Cost (₹)</label>
-                    <input type="number" className="input-field" placeholder="150" value={newTenantForm.waterCharges} onChange={(e) => setNewTenantForm({ ...newTenantForm, waterCharges: e.target.value })} />
+                    <input type="number" className="input-field" placeholder="150" value={newTenantForm.waterCharges} onChange={(e) => setNewTenantForm({ ...newTenantForm, waterCharges: parseInt(e.target.value) || '' })} disabled={wizardRooms.length > 0} />
                   </div>
                 </div>
 
@@ -2608,10 +4155,85 @@ export default function App() {
               </div>
             )}
 
-            {/* STEP 4: Document uploads */}
+            {/* STEP 4: Additional Information (Optional) */}
             {tenantWizardStep === 4 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <h3>Section 4: Upload Verification Documents</h3>
+                <h3>Section 4: Additional Information (Optional)</h3>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div className="form-group">
+                    <label>Gender</label>
+                    <select 
+                      className="input-field" 
+                      value={newTenantForm.gender} 
+                      onChange={(e) => setNewTenantForm({ ...newTenantForm, gender: e.target.value })}
+                    >
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>Date of Birth</label>
+                    <input 
+                      type="date" 
+                      className="input-field" 
+                      value={newTenantForm.dob} 
+                      onChange={(e) => setNewTenantForm({ ...newTenantForm, dob: e.target.value })} 
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div className="form-group">
+                    <label>Company / College</label>
+                    <input 
+                      type="text" 
+                      className="input-field" 
+                      placeholder="e.g. TCS or IIT Patna" 
+                      value={newTenantForm.companyCollege} 
+                      onChange={(e) => setNewTenantForm({ ...newTenantForm, companyCollege: e.target.value })} 
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Driving License No. (Optional)</label>
+                    <input 
+                      type="text" 
+                      className="input-field" 
+                      placeholder="e.g. DL-XXXXXXXXXXXX" 
+                      value={newTenantForm.drivingLicense} 
+                      onChange={(e) => setNewTenantForm({ ...newTenantForm, drivingLicense: e.target.value })} 
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label>Vehicle Details (License Plate, Make, Model)</label>
+                  <input 
+                    type="text" 
+                    className="input-field" 
+                    placeholder="e.g. MH-12-AB-1234 (Honda Activa White)" 
+                    value={newTenantForm.vehicleDetails} 
+                    onChange={(e) => setNewTenantForm({ ...newTenantForm, vehicleDetails: e.target.value })} 
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Internal Landlord Notes</label>
+                  <textarea 
+                    className="input-field" 
+                    placeholder="Add notes about tenant behavior, specific terms, or requirements..." 
+                    value={newTenantForm.notes} 
+                    onChange={(e) => setNewTenantForm({ ...newTenantForm, notes: e.target.value })} 
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* STEP 5: Document uploads */}
+            {tenantWizardStep === 5 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <h3>Section 5: Upload Verification Documents</h3>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Simulating upload system. These documents are verified by the landlord instantly.</p>
                 <div className="form-group" style={{ border: '2px dashed var(--border-color)', padding: '16px', borderRadius: '12px', textAlign: 'center' }}>
                   <span>📂 Drag & Drop Aadhaar Card front & back images</span>
@@ -2630,10 +4252,10 @@ export default function App() {
 
             <div className="wizard-actions">
               {tenantWizardStep > 1 ? (
-                <button className="dev-btn" onClick={() => setTenantWizardStep(tenantWizardStep - 1)}>Back Step</button>
+                <button className="btn-secondary" onClick={() => setTenantWizardStep(tenantWizardStep - 1)}>Back Step</button>
               ) : <div />}
               
-              {tenantWizardStep < 4 ? (
+              {tenantWizardStep < 5 ? (
                 <button className="btn-primary" onClick={() => setTenantWizardStep(tenantWizardStep + 1)}>Next Step</button>
               ) : (
                 <button className="btn-primary" onClick={handleCreateTenant}>Save Tenant Checked-In</button>
@@ -2647,7 +4269,7 @@ export default function App() {
       {/* MODAL: ADD PROPERTY */}
       {showAddProperty && (
         <div className="modal-overlay">
-          <div className="modal-content" style={{ maxWidth: '400px' }}>
+          <div className="modal-content" style={{ maxWidth: '500px' }}>
             <div className="modal-header">
               <h2>Add New Estate</h2>
               <button className="close-btn" onClick={() => setShowAddProperty(false)}><X size={20} /></button>
@@ -2658,18 +4280,36 @@ export default function App() {
                 <label>Property Name</label>
                 <input type="text" className="input-field" placeholder="House C or Commercial Mall" value={newPropertyForm.name} onChange={(e) => setNewPropertyForm({ ...newPropertyForm, name: e.target.value })} required />
               </div>
-              <div className="form-group">
-                <label>Estate Type</label>
-                <select className="input-field" value={newPropertyForm.type} onChange={(e) => setNewPropertyForm({ ...newPropertyForm, type: e.target.value })}>
-                  <option value="Residential">Residential (Rooms/Flats)</option>
-                  <option value="Commercial">Commercial (Shops/Complexes)</option>
-                </select>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label>Estate Type</label>
+                  <select className="input-field" value={newPropertyForm.type} onChange={(e) => setNewPropertyForm({ ...newPropertyForm, type: e.target.value })}>
+                    <option value="Residential">Residential (Rooms/Flats)</option>
+                    <option value="Commercial">Commercial (Shops/Complexes)</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Total Rooms/Units</label>
+                  <input type="number" className="input-field" placeholder="10" value={newPropertyForm.totalRooms} onChange={(e) => setNewPropertyForm({ ...newPropertyForm, totalRooms: e.target.value })} required />
+                </div>
               </div>
-              <div className="form-group">
-                <label>Total Rooms/Units</label>
-                <input type="number" className="input-field" placeholder="10" value={newPropertyForm.totalRooms} onChange={(e) => setNewPropertyForm({ ...newPropertyForm, totalRooms: e.target.value })} required />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label>Property Address</label>
+                  <input type="text" className="input-field" placeholder="e.g. 123, Rose Lane, Patna" value={newPropertyForm.address} onChange={(e) => setNewPropertyForm({ ...newPropertyForm, address: e.target.value })} />
+                </div>
               </div>
-              <button type="submit" className="btn-primary">Add Estate</button>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label>Description / Details</label>
+                  <input type="text" className="input-field" placeholder="e.g. Located near city center" value={newPropertyForm.description} onChange={(e) => setNewPropertyForm({ ...newPropertyForm, description: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label>Number of Floors</label>
+                  <input type="number" className="input-field" placeholder="1" value={newPropertyForm.floors} onChange={(e) => setNewPropertyForm({ ...newPropertyForm, floors: e.target.value })} />
+                </div>
+              </div>
+              <button type="submit" className="btn-primary" style={{ padding: '12px' }}>Add Estate</button>
             </form>
           </div>
         </div>

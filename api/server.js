@@ -13,7 +13,7 @@ const rateLimit = require('express-rate-limit');
 
 // Database client & schema
 const { db } = require('./src/db/index');
-const { users, properties, tenants, bills, comments, chats, notifications, auditLogs, sessions } = require('./src/db/schema');
+const { users, properties, rooms, tenants, bills, comments, chats, notifications, auditLogs, sessions, announcements } = require('./src/db/schema');
 const { eq, and, or, desc, ne } = require('drizzle-orm');
 
 // Cryptographic & Validation helpers
@@ -26,7 +26,8 @@ const {
 // Security Middlewares
 const { authenticateJWT, authorizeRoles } = require('./src/middleware/auth');
 const { verifyOwnership } = require('./src/middleware/ownership');
-const { upload, validateFileSize, UPLOAD_DIR } = require('./src/middleware/upload');
+const { upload, uploadMemory, validateFileSize, UPLOAD_DIR } = require('./src/middleware/upload');
+const googleDriveService = require('./src/services/googleDriveService');
 
 // Load environment config
 require('dotenv').config();
@@ -86,19 +87,19 @@ const loginLimiter = rateLimit({
 
 const generalLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 100,
+  max: process.env.NODE_ENV === 'development' ? 10000 : 100,
   message: { message: 'Rate limit exceeded.' }
 });
 
 const chatLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 50,
+  max: process.env.NODE_ENV === 'development' ? 5000 : 50,
   message: { message: 'Chat rate limit exceeded.' }
 });
 
 const uploadLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 20,
+  max: process.env.NODE_ENV === 'development' ? 1000 : 20,
   message: { message: 'Upload rate limit exceeded.' }
 });
 
@@ -374,6 +375,70 @@ app.post('/api/auth/change-password', authenticateJWT, async (req, res, next) =>
   }
 });
 
+// Request Forgot Password Code (Simulator Mode)
+app.post('/api/auth/forgot-password', loginLimiter, async (req, res, next) => {
+  try {
+    const { loginInput, tenantLoginId, role } = req.body;
+    let userArr = [];
+
+    if (role === 'owner') {
+      if (!loginInput) return res.status(400).json({ message: 'Email or phone is required.' });
+      userArr = await db.select().from(users).where(
+        or(eq(users.email, loginInput.trim()), eq(users.phone, loginInput.trim()))
+      );
+    } else {
+      if (!tenantLoginId) return res.status(400).json({ message: 'Tenant User ID is required.' });
+      userArr = await db.select().from(users).where(eq(users.tenantLoginId, tenantLoginId.trim()));
+    }
+
+    if (userArr.length === 0) {
+      return res.status(404).json({ message: 'User account not found.' });
+    }
+
+    const user = userArr[0];
+    
+    // Generate a 6-digit random code
+    const recoveryCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // In a production system, we would dispatch SMS/Email. Here we simulate it.
+    // We return it to the frontend inside the payload for demonstration.
+    res.json({ 
+      success: true, 
+      message: 'Simulated recovery OTP sent successfully.', 
+      userId: user.id,
+      recoveryCode // Return it so frontend can alert it to user!
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Verify Recovery Code & Reset Password
+app.post('/api/auth/reset-password-verify', loginLimiter, async (req, res, next) => {
+  try {
+    const { userId, recoveryCode, newPassword } = req.body;
+    
+    if (!userId || !recoveryCode || !newPassword) {
+      return res.status(400).json({ message: 'Invalid payload elements.' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters long.' });
+    }
+
+    // Verify user exists
+    const userArr = await db.select().from(users).where(eq(users.id, userId));
+    if (userArr.length === 0) return res.status(404).json({ message: 'User not found.' });
+
+    const hashedPwd = await bcrypt.hash(newPassword, 10);
+    await db.update(users).set({ passwordHash: hashedPwd, isFirstLogin: false }).where(eq(users.id, userId));
+
+    res.json({ success: true, message: 'Password reset successfully!' });
+  } catch (error) {
+    next(error);
+  }
+});
+
 
 
 // ==============================================================
@@ -450,6 +515,141 @@ app.delete('/api/properties/:id', authenticateJWT, authorizeRoles('owner'), asyn
 });
 
 // ==============================================================
+// ROOMS & SHOPS INVENTORY MANAGEMENT APIs
+// ==============================================================
+
+// 1. List Rooms for a property
+app.get('/api/properties/:propertyId/rooms', authenticateJWT, async (req, res, next) => {
+  try {
+    const { propertyId } = req.params;
+    const roomList = await db.select().from(rooms).where(eq(rooms.propertyId, propertyId)).orderBy(rooms.number);
+    res.json(roomList);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// 2. Add Room/Shop to a property (Owner only)
+app.post('/api/properties/:propertyId/rooms', authenticateJWT, authorizeRoles('owner'), async (req, res, next) => {
+  try {
+    const { propertyId } = req.params;
+    const { number, floor, size, type, rent, electricityRate, waterCharges, status } = req.body;
+    
+    if (!number) return res.status(400).json({ message: 'Room number is required.' });
+
+    // Verify property exists
+    const propArr = await db.select().from(properties).where(eq(properties.id, propertyId));
+    if (propArr.length === 0) return res.status(404).json({ message: 'Property not found.' });
+
+    const newRoom = {
+      id: 'room-' + uuidv4(),
+      propertyId,
+      number,
+      floor: parseInt(floor) || 1,
+      size: size || '120 sq ft',
+      type: type || 'Room',
+      rent: parseInt(rent) || 0,
+      electricityRate: parseInt(electricityRate) || 6,
+      waterCharges: parseInt(waterCharges) || 0,
+      status: status || 'Available'
+    };
+
+    await db.insert(rooms).values(newRoom);
+
+    // Update property counts
+    const totalRoomsCount = await db.select().from(rooms).where(eq(rooms.propertyId, propertyId));
+    const occupiedCount = totalRoomsCount.filter(r => r.status === 'Occupied').length;
+    await db.update(properties)
+      .set({
+        totalRooms: totalRoomsCount.length,
+        occupied: occupiedCount,
+        vacant: Math.max(0, totalRoomsCount.length - occupiedCount)
+      })
+      .where(eq(properties.id, propertyId));
+
+    await logAuditAction(req, 'CREATE_ROOM', null, newRoom);
+    res.status(201).json(newRoom);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 3. Delete Room (Owner only)
+app.delete('/api/rooms/:roomId', authenticateJWT, authorizeRoles('owner'), async (req, res, next) => {
+  try {
+    const { roomId } = req.params;
+    const roomArr = await db.select().from(rooms).where(eq(rooms.id, roomId));
+    if (roomArr.length === 0) return res.status(404).json({ message: 'Room not found.' });
+    const room = roomArr[0];
+
+    // Check if room is occupied
+    if (room.status === 'Occupied') {
+      return res.status(400).json({ message: 'Cannot delete occupied room. Please check-out or reassign the tenant first.' });
+    }
+
+    await db.delete(rooms).where(eq(rooms.id, roomId));
+
+    // Update property counts
+    const propertyId = room.propertyId;
+    const totalRoomsCount = await db.select().from(rooms).where(eq(rooms.propertyId, propertyId));
+    const occupiedCount = totalRoomsCount.filter(r => r.status === 'Occupied').length;
+    await db.update(properties)
+      .set({
+        totalRooms: totalRoomsCount.length,
+        occupied: occupiedCount,
+        vacant: Math.max(0, totalRoomsCount.length - occupiedCount)
+      })
+      .where(eq(properties.id, propertyId));
+
+    await logAuditAction(req, 'DELETE_ROOM', room, null);
+    res.json({ success: true, message: 'Room deleted successfully.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 4. Update Room/Shop (Owner only)
+app.patch('/api/rooms/:roomId', authenticateJWT, authorizeRoles('owner'), async (req, res, next) => {
+  try {
+    const { roomId } = req.params;
+    const roomArr = await db.select().from(rooms).where(eq(rooms.id, roomId));
+    if (roomArr.length === 0) return res.status(404).json({ message: 'Room not found.' });
+    const room = roomArr[0];
+
+    const updates = {};
+    if (req.body.number !== undefined) updates.number = req.body.number;
+    if (req.body.floor !== undefined) updates.floor = parseInt(req.body.floor) || 1;
+    if (req.body.size !== undefined) updates.size = req.body.size;
+    if (req.body.type !== undefined) updates.type = req.body.type;
+    if (req.body.rent !== undefined) updates.rent = parseInt(req.body.rent) || 0;
+    if (req.body.electricityRate !== undefined) updates.electricityRate = parseInt(req.body.electricityRate) || 6;
+    if (req.body.waterCharges !== undefined) updates.waterCharges = parseInt(req.body.waterCharges) || 0;
+    if (req.body.status !== undefined) updates.status = req.body.status;
+
+    await db.update(rooms).set(updates).where(eq(rooms.id, roomId));
+
+    // Update property counts if status changed
+    if (req.body.status !== undefined && req.body.status !== room.status) {
+      const propertyId = room.propertyId;
+      const totalRoomsCount = await db.select().from(rooms).where(eq(rooms.propertyId, propertyId));
+      const occupiedCount = totalRoomsCount.filter(r => r.status === 'Occupied').length;
+      await db.update(properties)
+        .set({
+          occupied: occupiedCount,
+          vacant: Math.max(0, totalRoomsCount.length - occupiedCount)
+        })
+        .where(eq(properties.id, propertyId));
+    }
+
+    const updatedRoom = { ...room, ...updates };
+    await logAuditAction(req, 'UPDATE_ROOM', room, updatedRoom);
+    res.json(updatedRoom);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ==============================================================
 // TENANT MANAGEMENT APIs (RBAC + Ownership Checks)
 // ==============================================================
 app.get('/api/tenants', authenticateJWT, async (req, res, next) => {
@@ -500,19 +700,35 @@ app.get('/api/tenants', authenticateJWT, async (req, res, next) => {
 app.post('/api/tenants', authenticateJWT, authorizeRoles('owner'), async (req, res, next) => {
   try {
     const valid = tenantSchema.safeParse(req.body);
-    if (!valid.success) return res.status(400).json({ errors: valid.error.format() });
+    if (!valid.success) {
+      const errorMsg = valid.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      return res.status(400).json({ 
+        success: false,
+        message: `Validation failed: ${errorMsg}`,
+        errors: valid.error.format() 
+      });
+    }
 
     const {
       name, fatherName, phone, altPhone, email, occupation,
       aadhaar, pan, permanentAddress, propertyId, roomNumber,
       roomType, moveInDate, agreementDuration, rentAmount,
-      securityDeposit, electricityRate, waterCharges, photo, emergencyContact
+      securityDeposit, electricityRate, waterCharges, photo, emergencyContact,
+      roomId, gender, dob, companyCollege, drivingLicense, vehicleDetails, notes
     } = req.body;
 
     // Check if property exists
     const propArr = await db.select().from(properties).where(eq(properties.id, propertyId));
     if (propArr.length === 0) return res.status(404).json({ message: 'Target property not found.' });
     const prop = propArr[0];
+
+    // If roomId is provided, check if room is occupied
+    if (roomId) {
+      const roomArr = await db.select().from(rooms).where(eq(rooms.id, roomId));
+      if (roomArr.length > 0 && roomArr[0].status === 'Occupied') {
+        return res.status(400).json({ message: 'Room/Shop is already occupied.' });
+      }
+    }
 
     // Create system login for Tenant
     const tenantUserId = 'user-tenant-' + uuidv4();
@@ -535,7 +751,7 @@ app.post('/api/tenants', authenticateJWT, authorizeRoles('owner'), async (req, r
 
     const tenantId = 'tenant-' + uuidv4();
 
-    // Encrypt Aadhaar, PAN, Permanent Address, and Emergency Contact (AES-256-CBC)
+    // Encrypt Aadhaar, PAN, Permanent Address, Emergency Contact, and Driving License (AES-256-CBC)
     const newTenant = {
       id: tenantId,
       userId: tenantUserId,
@@ -562,10 +778,22 @@ app.post('/api/tenants', authenticateJWT, authorizeRoles('owner'), async (req, r
       waterCharges,
       status: 'Active',
       photo: photo || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150',
-      documents: req.body.documents || {}
+      documents: req.body.documents || {},
+      gender: gender || null,
+      dob: dob || null,
+      companyCollege: companyCollege || null,
+      drivingLicenseEncrypted: drivingLicense ? cryptoUtils.encrypt(drivingLicense) : null,
+      vehicleDetails: vehicleDetails || null,
+      notes: notes || null,
+      roomId: roomId || null
     };
 
     await db.insert(tenants).values(newTenant);
+
+    // If roomId is provided, mark room as Occupied in rooms table
+    if (roomId) {
+      await db.update(rooms).set({ status: 'Occupied' }).where(eq(rooms.id, roomId));
+    }
 
     // Update vacancy counts on property
     const newOccupied = prop.occupied + 1;
@@ -629,6 +857,10 @@ app.post('/api/tenants/:id/move-out', authenticateJWT, authorizeRoles('owner'), 
       .where(eq(tenants.id, tenantId));
 
     // Release room on property
+    if (tenant.roomId) {
+      await db.update(rooms).set({ status: 'Available' }).where(eq(rooms.id, tenant.roomId));
+    }
+
     const propArr = await db.select().from(properties).where(eq(properties.id, tenant.propertyId));
     if (propArr.length > 0) {
       const prop = propArr[0];
@@ -666,6 +898,11 @@ app.post('/api/tenants/:id/restore', authenticateJWT, authorizeRoles('owner'), a
       .set({ status: 'Active', leftDate: null, archiveDate: null })
       .where(eq(tenants.id, tenantId));
 
+    // Reoccupy room in rooms table if it exists
+    if (tenant.roomId) {
+      await db.update(rooms).set({ status: 'Occupied' }).where(eq(rooms.id, tenant.roomId));
+    }
+
     // Update Property Vacancy
     const propArr = await db.select().from(properties).where(eq(properties.id, tenant.propertyId));
     if (propArr.length > 0) {
@@ -697,6 +934,9 @@ app.delete('/api/tenants/:id', authenticateJWT, authorizeRoles('owner'), async (
 
     // Update occupied rooms if tenant was active
     if (tenant.status === 'Active') {
+      if (tenant.roomId) {
+        await db.update(rooms).set({ status: 'Available' }).where(eq(rooms.id, tenant.roomId));
+      }
       const propArr = await db.select().from(properties).where(eq(properties.id, tenant.propertyId));
       if (propArr.length > 0) {
         const prop = propArr[0];
@@ -1168,19 +1408,95 @@ app.post('/api/chats/:id/seen', authenticateJWT, verifyOwnership('chat'), async 
 // DOCUMENT UPLOADS & SIGNED URL SERVICE (Secure object store)
 // ==============================================================
 
-// Upload files inside Private Storage
-app.post('/api/documents/upload', authenticateJWT, uploadLimiter, upload.single('document'), validateFileSize, async (req, res, next) => {
+// Upload files inside Private Storage (Supports Google Drive vs Local Storage dynamically)
+app.post('/api/documents/upload', authenticateJWT, uploadLimiter, (req, res, next) => {
+  if (googleDriveService.isConfigured) {
+    uploadMemory.single('document')(req, res, (err) => {
+      if (err) return res.status(400).json({ message: err.message });
+      next();
+    });
+  } else {
+    upload.single('document')(req, res, (err) => {
+      if (err) return res.status(400).json({ message: err.message });
+      next();
+    });
+  }
+}, validateFileSize, async (req, res, next) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded.' });
     }
     
-    // Logs upload transaction
-    await logAuditAction(req, 'UPLOAD_DOCUMENT', null, { originalname: req.file.originalname, secureFilename: req.file.filename });
-    res.json({ 
-      success: true, 
-      filename: req.file.filename,
-      mimetype: req.file.mimetype 
+    if (googleDriveService.isConfigured) {
+      // Stream upload to Google Drive
+      const driveFile = await googleDriveService.uploadToGoogleDrive(req.file);
+      await logAuditAction(req, 'UPLOAD_DOCUMENT_DRIVE', null, { originalname: req.file.originalname, driveFileId: driveFile.id });
+      res.json({ 
+        success: true, 
+        message: 'Uploaded to Google Drive successfully!',
+        filename: driveFile.webViewLink, // Point filename/url to the webViewLink directly
+        viewLink: driveFile.webViewLink,
+        downloadLink: driveFile.webContentLink,
+        mimetype: req.file.mimetype,
+        isGoogleDrive: true
+      });
+    } else {
+      // Local upload fallback
+      await logAuditAction(req, 'UPLOAD_DOCUMENT', null, { originalname: req.file.originalname, secureFilename: req.file.filename });
+      res.json({ 
+        success: true, 
+        filename: req.file.filename,
+        mimetype: req.file.mimetype,
+        isGoogleDrive: false
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update tenant documents links/photos
+app.post('/api/tenants/:id/documents', authenticateJWT, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { documents, photo } = req.body;
+
+    // Verify permission: Owners can update any tenant; Tenants can only update their own profile
+    if (req.user.role === 'tenant') {
+      const selfRecs = await db.select().from(tenants).where(eq(tenants.userId, req.user.id));
+      if (selfRecs.length === 0 || selfRecs[0].id !== id) {
+        return res.status(403).json({ message: 'Forbidden. You can only update your own documents.' });
+      }
+    }
+
+    const tenantRecs = await db.select().from(tenants).where(eq(tenants.id, id));
+    if (tenantRecs.length === 0) {
+      return res.status(404).json({ message: 'Tenant not found.' });
+    }
+
+    const currentTenant = tenantRecs[0];
+    const updatedDocs = {
+      ...(currentTenant.documents || {}),
+      ...(documents || {})
+    };
+
+    const updateFields = { documents: updatedDocs };
+    if (photo !== undefined) {
+      updateFields.photo = photo;
+    }
+
+    await db.update(tenants)
+      .set(updateFields)
+      .where(eq(tenants.id, id));
+
+    await logAuditAction(req, 'UPDATE_TENANT_DOCUMENTS', null, { tenantId: id });
+
+    // Fetch and return the updated tenant profile
+    const updatedTenant = await db.select().from(tenants).where(eq(tenants.id, id));
+    res.json({
+      success: true,
+      message: 'Tenant documents updated successfully!',
+      tenant: updatedTenant[0]
     });
   } catch (error) {
     next(error);
@@ -1299,6 +1615,77 @@ app.post('/api/notifications/mark-all-read', authenticateJWT, async (req, res, n
         .where(eq(notifications.forRole, 'owner'));
     }
     res.json({ success: true, message: 'All notifications marked as read.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ==============================================================
+// ANNOUNCEMENTS BOARD APIs
+// ==============================================================
+
+// 1. List Announcements (Owners and Tenants)
+app.get('/api/announcements', authenticateJWT, async (req, res, next) => {
+  try {
+    const list = await db.select().from(announcements).orderBy(desc(announcements.createdAt));
+    res.json(list);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// 2. Broadcast Announcement (Owner only)
+app.post('/api/announcements', authenticateJWT, authorizeRoles('owner'), async (req, res, next) => {
+  try {
+    const { title, message, category } = req.body;
+    if (!title || !message) {
+      return res.status(400).json({ message: 'Title and message are required.' });
+    }
+
+    const newAnnouncement = {
+      id: 'ann-' + uuidv4(),
+      title,
+      message,
+      category: category || 'General',
+      createdAt: new Date().toISOString(),
+      ownerId: req.user.id
+    };
+
+    await db.insert(announcements).values(newAnnouncement);
+
+    // Broadcast in-app notifications to all active tenants
+    const activeTenants = await db.select().from(tenants).where(eq(tenants.status, 'Active'));
+    
+    for (const tenant of activeTenants) {
+      await db.insert(notifications).values({
+        id: 'notif-' + uuidv4(),
+        tenantId: tenant.id,
+        title: `📢 Announcement: ${title}`,
+        message: message.substring(0, 100),
+        time: new Date().toISOString(),
+        forRole: 'tenant',
+        read: false
+      });
+    }
+
+    await logAuditAction(req, 'BROADCAST_ANNOUNCEMENT', null, newAnnouncement);
+    res.status(201).json(newAnnouncement);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 3. Delete Announcement (Owner only)
+app.delete('/api/announcements/:id', authenticateJWT, authorizeRoles('owner'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const annArr = await db.select().from(announcements).where(eq(announcements.id, id));
+    if (annArr.length === 0) return res.status(404).json({ message: 'Announcement not found.' });
+
+    await db.delete(announcements).where(eq(announcements.id, id));
+    await logAuditAction(req, 'DELETE_ANNOUNCEMENT', annArr[0], null);
+    
+    res.json({ success: true, message: 'Announcement deleted.' });
   } catch (error) {
     next(error);
   }

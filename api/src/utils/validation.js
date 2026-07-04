@@ -25,19 +25,29 @@ const tenantSchema = z.object({
   roomNumber: z.string().min(1, 'Room number is required'),
   roomType: z.enum(['Room', 'Shop', 'Flat']),
   moveInDate: z.string().min(1, 'Move in date is required'),
-  agreementDuration: z.number().int().min(1, 'Agreement duration must be positive'),
-  rentAmount: z.number().min(0, 'Rent amount cannot be negative'),
-  securityDeposit: z.number().min(0, 'Security deposit cannot be negative'),
-  electricityRate: z.number().min(0, 'Electricity unit rate cannot be negative'),
-  waterCharges: z.number().min(0, 'Water charges cannot be negative'),
+  agreementDuration: z.coerce.number().int().min(1, 'Agreement duration must be positive'),
+  rentAmount: z.coerce.number().min(0, 'Rent amount cannot be negative'),
+  securityDeposit: z.coerce.number().min(0, 'Security deposit cannot be negative'),
+  electricityRate: z.coerce.number().min(0, 'Electricity unit rate cannot be negative'),
+  waterCharges: z.coerce.number().min(0, 'Water charges cannot be negative'),
   photo: z.string().optional(),
-  emergencyContact: z.string().optional().nullable()
+  emergencyContact: z.string().optional().nullable(),
+  gender: z.string().optional().nullable(),
+  dob: z.string().optional().nullable(),
+  companyCollege: z.string().optional().nullable(),
+  drivingLicense: z.string().optional().nullable(),
+  vehicleDetails: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+  roomId: z.string().optional().nullable()
 });
 
 const propertySchema = z.object({
   name: z.string().min(2, 'Property name is too short').max(256),
   type: z.enum(['Residential', 'Commercial']),
-  totalRooms: z.number().int().min(1, 'Total units must be at least 1')
+  totalRooms: z.number().int().min(1, 'Total units must be at least 1'),
+  address: z.string().optional().nullable(),
+  description: z.string().optional().nullable(),
+  floors: z.number().int().min(1).optional()
 });
 
 const billSchema = z.object({
@@ -48,7 +58,10 @@ const billSchema = z.object({
   lateFee: z.number().min(0).optional(),
   discount: z.number().min(0).optional(),
   extraCharges: z.number().min(0).optional(),
-  extraChargesReason: z.string().optional()
+  extraChargesReason: z.string().optional(),
+  prevMeterReading: z.number().int().min(0).optional(),
+  currMeterReading: z.number().int().min(0).optional(),
+  meterPhoto: z.string().optional().nullable()
 });
 
 const commentSchema = z.object({

@@ -81,8 +81,17 @@ const validateFileSize = (req, res, next) => {
   next();
 };
 
+const uploadMemory = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: fileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB max limit
+  }
+});
+
 module.exports = {
   upload,
+  uploadMemory,
   validateFileSize,
   UPLOAD_DIR
 };
