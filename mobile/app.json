@@ -12,6 +12,11 @@
     "android": {
       "package": "com.sandeepsmile390.rentifymobile",
       "versionCode": 1
+    },
+    "extra": {
+      "eas": {
+        "projectId": "421aa692-e397-42b2-875b-57041fc12e81"
+      }
     }
   }
 }
