@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, Switch, TouchableOpacity, Alert, SafeAreaView, ScrollView } from 'react-native';
+import { StyleSheet, Text, View, Switch, TouchableOpacity, Alert, SafeAreaView, ScrollView, Modal, TextInput } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 
@@ -9,6 +9,11 @@ export default function AppLockSettingsScreen({ navigation }) {
   const [hasBiometricHardware, setHasBiometricHardware] = useState(false);
   const [autoLockTime, setAutoLockTime] = useState('immediately'); // 'immediately' | '30s' | '1m' | '5m'
   const [showTimePicker, setShowTimePicker] = useState(false);
+
+  // Platform-safe Modal state for PIN setup/deactivation
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalMode, setModalMode] = useState('set'); // 'set' | 'disable'
+  const [pinInput, setPinInput] = useState('');
 
   useEffect(() => {
     loadSettings();
@@ -41,53 +46,59 @@ export default function AppLockSettingsScreen({ navigation }) {
 
   const handleTogglePin = async (value) => {
     if (value) {
-      // Configuration prompt for PIN code
-      Alert.prompt(
-        'Set App PIN Passcode',
-        'Enter a 4-digit code to protect your Rentify application:',
-        async (enteredPin) => {
-          if (!enteredPin || enteredPin.length !== 4 || isNaN(enteredPin)) {
-            Alert.alert('Invalid PIN', 'Passcode must be exactly 4 numeric digits.');
-            setPinEnabled(false);
-            return;
-          }
-          try {
-            await AsyncStorage.setItem('app_lock_pin', enteredPin);
-            await AsyncStorage.setItem('app_lock_pin_enabled', 'true');
-            setPinEnabled(true);
-            Alert.alert('PIN Configured', 'App lock passcode configured successfully.');
-          } catch (e) {
-            Alert.alert('Error', 'Failed to configure PIN.');
-          }
-        },
-        'secure-text'
-      );
+      setModalMode('set');
+      setPinInput('');
+      setModalVisible(true);
     } else {
-      // Deactivating PIN lock passcode
-      Alert.prompt(
-        'Enter App PIN Passcode',
-        'Enter your current 4-digit code to disable PIN lock:',
-        async (enteredPin) => {
-          const savedPin = await AsyncStorage.getItem('app_lock_pin');
-          if (enteredPin === savedPin) {
-            try {
-              await AsyncStorage.setItem('app_lock_pin_enabled', 'false');
-              await AsyncStorage.removeItem('app_lock_pin');
-              setPinEnabled(false);
-              // Also disable biometrics if PIN is disabled
-              await AsyncStorage.setItem('biometrics_owner_enabled', 'false');
-              setBiometricEnabled(false);
-              Alert.alert('Passcode Disabled', 'App lock protection deactivated.');
-            } catch (e) {
-              console.warn(e);
-            }
-          } else {
-            Alert.alert('Error', 'Incorrect PIN code. Protection stays active.');
-            setPinEnabled(true);
-          }
-        },
-        'secure-text'
-      );
+      setModalMode('disable');
+      setPinInput('');
+      setModalVisible(true);
+    }
+  };
+
+  const handleModalSubmit = async () => {
+    if (!pinInput || pinInput.length !== 4 || isNaN(pinInput)) {
+      Alert.alert('Invalid PIN', 'Passcode must be exactly 4 numeric digits.');
+      if (modalMode === 'set') {
+        setPinEnabled(false);
+      }
+      setModalVisible(false);
+      return;
+    }
+
+    if (modalMode === 'set') {
+      try {
+        await AsyncStorage.setItem('app_lock_pin', pinInput);
+        await AsyncStorage.setItem('app_lock_pin_enabled', 'true');
+        setPinEnabled(true);
+        setModalVisible(false);
+        Alert.alert('PIN Configured', 'App lock passcode configured successfully.');
+      } catch (e) {
+        Alert.alert('Error', 'Failed to configure PIN.');
+        setPinEnabled(false);
+        setModalVisible(false);
+      }
+    } else {
+      const savedPin = await AsyncStorage.getItem('app_lock_pin');
+      if (pinInput === savedPin) {
+        try {
+          await AsyncStorage.setItem('app_lock_pin_enabled', 'false');
+          await AsyncStorage.removeItem('app_lock_pin');
+          setPinEnabled(false);
+          // Also disable biometrics if PIN is disabled
+          await AsyncStorage.setItem('biometrics_owner_enabled', 'false');
+          setBiometricEnabled(false);
+          setModalVisible(false);
+          Alert.alert('Passcode Disabled', 'App lock protection deactivated.');
+        } catch (e) {
+          console.warn(e);
+          setModalVisible(false);
+        }
+      } else {
+        setModalVisible(false);
+        Alert.alert('Error', 'Incorrect PIN code. Protection stays active.');
+        setPinEnabled(true);
+      }
     }
   };
 
@@ -217,6 +228,62 @@ export default function AppLockSettingsScreen({ navigation }) {
         )}
 
       </ScrollView>
+
+      {/* Custom Modal for platform-safe PIN input */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={modalVisible}
+        onRequestClose={() => {
+          setModalVisible(false);
+          if (modalMode === 'set') setPinEnabled(false);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>
+              {modalMode === 'set' ? 'Set App PIN Passcode' : 'Enter App PIN Passcode'}
+            </Text>
+            <Text style={styles.modalSubtitle}>
+              {modalMode === 'set' 
+                ? 'Enter a 4-digit code to protect your Rentify application:' 
+                : 'Enter your current 4-digit code to disable PIN lock:'}
+            </Text>
+            
+            <TextInput
+              style={styles.modalInput}
+              keyboardType="number-pad"
+              maxLength={4}
+              secureTextEntry={true}
+              autoFocus={true}
+              value={pinInput}
+              onChangeText={setPinInput}
+              placeholder="••••"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalCancelBtn]}
+                onPress={() => {
+                  setModalVisible(false);
+                  if (modalMode === 'set') setPinEnabled(false);
+                }}
+              >
+                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalSubmitBtn]}
+                onPress={handleModalSubmit}
+              >
+                <Text style={styles.modalSubmitBtnText}>Submit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -330,5 +397,82 @@ const styles = StyleSheet.create({
     color: '#4F46E5',
     fontSize: 14,
     fontWeight: 'bold',
-  }
+  },
+  /* Modal Styles */
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 20,
+  },
+  modalInput: {
+    width: '100%',
+    height: 52,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0F172A',
+    textAlign: 'center',
+    letterSpacing: 8,
+    marginBottom: 20,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  modalBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCancelBtn: {
+    backgroundColor: '#F1F5F9',
+  },
+  modalCancelBtnText: {
+    color: '#475569',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  modalSubmitBtn: {
+    backgroundColor: '#4F46E5',
+  },
+  modalSubmitBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
 });

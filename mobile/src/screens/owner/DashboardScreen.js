@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Platform } from 'react-native';
 import { propertyService, tenantService, billService, commentService } from '../../services/api';
 
 export default function DashboardScreen({ navigation }) {
@@ -154,29 +154,47 @@ export default function DashboardScreen({ navigation }) {
         <TouchableOpacity 
           style={styles.actionBtn}
           onPress={async () => {
-            Alert.prompt(
-              'Generate Monthly Bills',
-              'Enter billing month (e.g. "July 2026"):',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Generate',
-                  onPress: async (month) => {
-                    if (!month) return;
-                    try {
-                      setLoading(true);
-                      await billService.generateMonthlyBills(month);
-                      Alert.alert('Success', `Monthly bills for ${month} generated successfully.`);
-                      fetchDashboardStats();
-                    } catch (err) {
-                      Alert.alert('Error', 'Failed to generate bills.');
-                    } finally {
-                      setLoading(false);
-                    }
-                  }
-                }
-              ]
-            );
+            const generateBills = async (month) => {
+              if (!month) return;
+              try {
+                setLoading(true);
+                await billService.generateMonthlyBills(month);
+                Alert.alert('Success', `Monthly bills for ${month} generated successfully.`);
+                fetchDashboardStats();
+              } catch (err) {
+                Alert.alert('Error', 'Failed to generate bills.');
+              } finally {
+                setLoading(false);
+              }
+            };
+
+            if (Platform.OS === 'ios') {
+              Alert.prompt(
+                'Generate Monthly Bills',
+                'Enter billing month (e.g. "July 2026"):',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Generate', onPress: generateBills }
+                ]
+              );
+            } else {
+              // Safe fallback for Android & Web: Generate for current month automatically
+              const date = new Date();
+              const monthNames = [
+                "January", "February", "March", "April", "May", "June", 
+                "July", "August", "September", "October", "November", "December"
+              ];
+              const currentMonth = `${monthNames[date.getMonth()]} ${date.getFullYear()}`;
+              
+              Alert.alert(
+                'Generate Monthly Bills',
+                `Generate bills for all occupied rooms for the current month (${currentMonth})?`,
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Generate', onPress: () => generateBills(currentMonth) }
+                ]
+              );
+            }
           }}
         >
           <Text style={styles.actionIcon}>🧾</Text>
