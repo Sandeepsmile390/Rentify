@@ -5,6 +5,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { getSecureItem, deleteSecureItem } from './src/services/api';
 
 // Tenant Screens
@@ -215,114 +216,116 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
-      <StatusBar style="auto" />
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {/* State 1: Logged Out (Auth Stack) */}
-        {!isLogged && (
-          <>
-            <Stack.Screen name="RoleSelect">
-              {(props) => (
-                <RoleSelectScreen 
-                  {...props} 
-                  onLoginSuccess={handleLoginSuccess} 
-                />
-              )}
-            </Stack.Screen>
-            <Stack.Screen name="OwnerLogin">
-              {(props) => (
-                <OwnerLoginScreen 
-                  {...props} 
-                  onLoginSuccess={handleLoginSuccess} 
-                />
-              )}
-            </Stack.Screen>
-            <Stack.Screen name="TenantLogin">
-              {(props) => (
-                <TenantLoginScreen 
-                  {...props} 
-                  onLoginSuccess={handleLoginSuccess} 
-                />
-              )}
-            </Stack.Screen>
-            <Stack.Screen name="FirstLogin" component={FirstLoginScreen} />
-          </>
-        )}
+    <SafeAreaProvider>
+      <NavigationContainer>
+        <StatusBar style="auto" />
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          {/* State 1: Logged Out (Auth Stack) */}
+          {!isLogged && (
+            <>
+              <Stack.Screen name="RoleSelect">
+                {(props) => (
+                  <RoleSelectScreen 
+                    {...props} 
+                    onLoginSuccess={handleLoginSuccess} 
+                  />
+                )}
+              </Stack.Screen>
+              <Stack.Screen name="OwnerLogin">
+                {(props) => (
+                  <OwnerLoginScreen 
+                    {...props} 
+                    onLoginSuccess={handleLoginSuccess} 
+                  />
+                )}
+              </Stack.Screen>
+              <Stack.Screen name="TenantLogin">
+                {(props) => (
+                  <TenantLoginScreen 
+                    {...props} 
+                    onLoginSuccess={handleLoginSuccess} 
+                  />
+                )}
+              </Stack.Screen>
+              <Stack.Screen name="FirstLogin" component={FirstLoginScreen} />
+            </>
+          )}
 
-        {/* State 2: Logged In & App Lock is Active (Lock Stack) */}
-        {isLogged && isLocked && (
-          <>
-            <Stack.Screen name="Biometric">
-              {(props) => (
-                <BiometricScreen 
-                  {...props} 
-                  onUnlockSuccess={handleUnlockSuccess}
-                  onLogout={handleLogout}
-                />
-              )}
-            </Stack.Screen>
-            <Stack.Screen name="AppLock">
-              {(props) => (
-                <AppLockScreen 
-                  {...props} 
-                  onUnlockSuccess={handleUnlockSuccess}
-                />
-              )}
-            </Stack.Screen>
-          </>
-        )}
+          {/* State 2: Logged In & App Lock is Active (Lock Stack) */}
+          {isLogged && isLocked && (
+            <>
+              <Stack.Screen name="Biometric">
+                {(props) => (
+                  <BiometricScreen 
+                    {...props} 
+                    onUnlockSuccess={handleUnlockSuccess}
+                    onLogout={handleLogout}
+                  />
+                )}
+              </Stack.Screen>
+              <Stack.Screen name="AppLock">
+                {(props) => (
+                  <AppLockScreen 
+                    {...props} 
+                    onUnlockSuccess={handleUnlockSuccess}
+                  />
+                )}
+              </Stack.Screen>
+            </>
+          )}
 
-        {/* State 3: Logged In & Unlocked (Main Stack & Tab Subviews) */}
-        {isLogged && !isLocked && (
-          <>
-            {role === 'owner' ? (
+          {/* State 3: Logged In & Unlocked (Main Stack & Tab Subviews) */}
+          {isLogged && !isLocked && (
+            <>
+              {role === 'owner' ? (
+                <Stack.Screen 
+                  name="MainTabs" 
+                  component={OwnerTabs} 
+                  initialParams={{ onLogout: handleLogout }}
+                />
+              ) : (
+                <Stack.Screen 
+                  name="MainTabs" 
+                  component={TenantTabs} 
+                  initialParams={{ onLogout: handleLogout }}
+                />
+              )}
+              
+              {/* Common sub-screens */}
               <Stack.Screen 
-                name="MainTabs" 
-                component={OwnerTabs} 
-                initialParams={{ onLogout: handleLogout }}
+                name="ActiveSessions" 
+                component={ActiveSessionsScreen} 
+                options={{ headerShown: true, title: 'Device Sessions' }}
               />
-            ) : (
               <Stack.Screen 
-                name="MainTabs" 
-                component={TenantTabs} 
-                initialParams={{ onLogout: handleLogout }}
+                name="AppLockSettings" 
+                component={AppLockSettingsScreen} 
+                options={{ headerShown: true, title: 'Security Settings' }}
               />
-            )}
-            
-            {/* Common sub-screens */}
-            <Stack.Screen 
-              name="ActiveSessions" 
-              component={ActiveSessionsScreen} 
-              options={{ headerShown: true, title: 'Device Sessions' }}
-            />
-            <Stack.Screen 
-              name="AppLockSettings" 
-              component={AppLockSettingsScreen} 
-              options={{ headerShown: true, title: 'Security Settings' }}
-            />
 
-            {/* Tenant specific sub-screens */}
-            <Stack.Screen 
-              name="DocumentUpload" 
-              component={DocumentUploadScreen} 
-              options={{ headerShown: false }}
-            />
+              {/* Tenant specific sub-screens */}
+              <Stack.Screen 
+                name="DocumentUpload" 
+                component={DocumentUploadScreen} 
+                options={{ headerShown: false }}
+              />
 
-            {/* Landlord specific sub-screens */}
-            <Stack.Screen 
-              name="TenantDetail" 
-              component={OwnerTenantDetailScreen} 
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen 
-              name="ChatConversation" 
-              component={OwnerChatConversationScreen} 
-              options={{ headerShown: false }}
-            />
-          </>
-        )}
-      </Stack.Navigator>
-    </NavigationContainer>
+              {/* Landlord specific sub-screens */}
+              <Stack.Screen 
+                name="TenantDetail" 
+                component={OwnerTenantDetailScreen} 
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen 
+                name="ChatConversation" 
+                component={OwnerChatConversationScreen} 
+                options={{ headerShown: false }}
+              />
+            </>
+          )}
+        </Stack.Navigator>
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }
 
