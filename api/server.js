@@ -701,7 +701,8 @@ app.post('/api/tenants', authenticateJWT, authorizeRoles('owner'), async (req, r
   try {
     const valid = tenantSchema.safeParse(req.body);
     if (!valid.success) {
-      const errorMsg = valid.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      const issues = valid.error.errors || valid.error.issues || [];
+      const errorMsg = issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
       return res.status(400).json({ 
         success: false,
         message: `Validation failed: ${errorMsg}`,

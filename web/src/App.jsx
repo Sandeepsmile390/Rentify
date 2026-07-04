@@ -4,7 +4,7 @@ import {
   MessageSquare, FileText, BarChart3, Settings, Bell, Sun, Moon, 
   Search, Plus, Trash2, UserMinus, Archive, Send, Paperclip, 
   ChevronRight, User, Check, RefreshCw, X, Smartphone, 
-  AlertTriangle, HelpCircle, ArrowUpRight, ArrowDownRight, Sparkles, Download, MessageCircle, Megaphone
+  AlertTriangle, HelpCircle, ArrowUpRight, ArrowDownRight, Sparkles, Download, MessageCircle, Megaphone, Menu
 } from 'lucide-react';
 import Logo from './components/Logo';
 import AuthFlow, { ActiveSessions } from './components/AuthFlow';
@@ -17,6 +17,7 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 export default function App() {
   // Theme state
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   // App views state
   const [activeView, setActiveView] = useState('dashboard');
@@ -995,55 +996,72 @@ export default function App() {
         role === 'owner' ? (
         // OWNER PORTAL
         <div className="web-layout">
+          {/* Mobile Sidebar Backdrop */}
+          {mobileMenuOpen && (
+            <div 
+              className="sidebar-backdrop" 
+              onClick={() => setMobileMenuOpen(false)}
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                zIndex: 90
+              }}
+            />
+          )}
+
           {/* Sidebar */}
-          <div className="sidebar">
+          <div className={`sidebar ${mobileMenuOpen ? 'open' : ''}`}>
             <div className="sidebar-header">
               <Logo size={42} />
               <div className="sidebar-logo">Rentify</div>
             </div>
             
             <div className="sidebar-nav">
-              <div className={`nav-item ${activeView === 'dashboard' ? 'active' : ''}`} onClick={() => { setActiveView('dashboard'); setSelectedTenant(null); }}>
+              <div className={`nav-item ${activeView === 'dashboard' ? 'active' : ''}`} onClick={() => { setActiveView('dashboard'); setSelectedTenant(null); setMobileMenuOpen(false); }}>
                 <LayoutDashboard size={18} />
                 Dashboard
               </div>
-              <div className={`nav-item ${activeView === 'properties' ? 'active' : ''}`} onClick={() => { setActiveView('properties'); setSelectedTenant(null); }}>
+              <div className={`nav-item ${activeView === 'properties' ? 'active' : ''}`} onClick={() => { setActiveView('properties'); setSelectedTenant(null); setMobileMenuOpen(false); }}>
                 <Building2 size={18} />
                 Properties
               </div>
-              <div className={`nav-item ${activeView === 'tenants' ? 'active' : ''}`} onClick={() => { setActiveView('tenants'); setSelectedTenant(null); }}>
+              <div className={`nav-item ${activeView === 'tenants' ? 'active' : ''}`} onClick={() => { setActiveView('tenants'); setSelectedTenant(null); setMobileMenuOpen(false); }}>
                 <Users size={18} />
                 Tenants
               </div>
-              <div className={`nav-item ${activeView === 'bills' ? 'active' : ''}`} onClick={() => { setActiveView('bills'); setSelectedTenant(null); }}>
+              <div className={`nav-item ${activeView === 'bills' ? 'active' : ''}`} onClick={() => { setActiveView('bills'); setSelectedTenant(null); setMobileMenuOpen(false); }}>
                 <Receipt size={18} />
                 Bills & Utilities
               </div>
-              <div className={`nav-item ${activeView === 'payments' ? 'active' : ''}`} onClick={() => { setActiveView('payments'); setSelectedTenant(null); }}>
+              <div className={`nav-item ${activeView === 'payments' ? 'active' : ''}`} onClick={() => { setActiveView('payments'); setSelectedTenant(null); setMobileMenuOpen(false); }}>
                 <CreditCard size={18} />
                 Payments Ledger
               </div>
-              <div className={`nav-item ${activeView === 'chat' ? 'active' : ''}`} onClick={() => { setActiveView('chat'); setSelectedTenant(null); }}>
+              <div className={`nav-item ${activeView === 'chat' ? 'active' : ''}`} onClick={() => { setActiveView('chat'); setSelectedTenant(null); setMobileMenuOpen(false); }}>
                 <MessageSquare size={18} />
                 Chats & Queries
               </div>
-              <div className={`nav-item ${activeView === 'documents' ? 'active' : ''}`} onClick={() => { setActiveView('documents'); setSelectedTenant(null); }}>
+              <div className={`nav-item ${activeView === 'documents' ? 'active' : ''}`} onClick={() => { setActiveView('documents'); setSelectedTenant(null); setMobileMenuOpen(false); }}>
                 <FileText size={18} />
                 Documents
               </div>
-              <div className={`nav-item ${activeView === 'announcements' ? 'active' : ''}`} onClick={() => { setActiveView('announcements'); setSelectedTenant(null); }}>
+              <div className={`nav-item ${activeView === 'announcements' ? 'active' : ''}`} onClick={() => { setActiveView('announcements'); setSelectedTenant(null); setMobileMenuOpen(false); }}>
                 <Megaphone size={18} />
                 Announcements
               </div>
-              <div className={`nav-item ${activeView === 'reports' ? 'active' : ''}`} onClick={() => { setActiveView('reports'); setSelectedTenant(null); }}>
+              <div className={`nav-item ${activeView === 'reports' ? 'active' : ''}`} onClick={() => { setActiveView('reports'); setSelectedTenant(null); setMobileMenuOpen(false); }}>
                 <BarChart3 size={18} />
                 Reports
               </div>
-              <div className={`nav-item ${activeView === 'settings' ? 'active' : ''}`} onClick={() => { setActiveView('settings'); setSelectedTenant(null); }}>
+              <div className={`nav-item ${activeView === 'settings' ? 'active' : ''}`} onClick={() => { setActiveView('settings'); setSelectedTenant(null); setMobileMenuOpen(false); }}>
                 <Settings size={18} />
                 Settings
               </div>
-              <div className={`nav-item ${activeView === 'sessions' ? 'active' : ''}`} onClick={() => { setActiveView('sessions'); setSelectedTenant(null); }}>
+              <div className={`nav-item ${activeView === 'sessions' ? 'active' : ''}`} onClick={() => { setActiveView('sessions'); setSelectedTenant(null); setMobileMenuOpen(false); }}>
                 <ShieldCheck size={18} />
                 Device Sessions
               </div>
@@ -1062,6 +1080,13 @@ export default function App() {
           <div className="main-content">
             {/* Topbar */}
             <div className="topbar">
+              <button 
+                className="mobile-menu-toggle" 
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              >
+                <Menu size={24} />
+              </button>
+
               <div className="search-bar">
                 <Search size={16} />
                 <input 

@@ -2711,3 +2711,56 @@ h1, h2, h3, h4, h5, h6 {
   }
 }
 
+/* Mobile responsive sidebar drawer */
+.mobile-menu-toggle {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 8px;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition-fast);
+}
+
+.mobile-menu-toggle:hover {
+  background-color: var(--border-color);
+}
+
+@media (max-width: 768px) {
+  .web-layout {
+    flex-direction: column;
+  }
+  
+  .mobile-menu-toggle {
+    display: flex;
+  }
+  
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: -280px;
+    width: 260px;
+    height: 100vh;
+    z-index: 100;
+    box-shadow: var(--shadow-premium);
+    transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  .sidebar.open {
+    left: 0;
+  }
+  
+  .topbar {
+    padding: 16px 20px;
+    gap: 16px;
+  }
+  
+  .search-bar {
+    width: 100%;
+    max-width: none;
+  }
+}
+
