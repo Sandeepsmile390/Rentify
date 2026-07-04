@@ -61,7 +61,7 @@ export default function RoleSelectScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.container}>
       <Animated.View style={[styles.headerContainer, { opacity: fadeAnim }]}>
-        <Text style={styles.brandTitle}>⚡ RentFlow</Text>
+        <Text style={styles.brandTitle}>⚡ Rentify</Text>
         <Text style={styles.subtitle}>Smart Estates Management</Text>
         <Text style={styles.promptText}>Select your portal role to proceed:</Text>
       </Animated.View>
@@ -104,7 +104,7 @@ export default function RoleSelectScreen({ navigation }) {
         </Animated.View>
       </View>
 
-      <Text style={styles.footerNote}>RentFlow Encrypted Gate • v1.4.0</Text>
+      <Text style={styles.footerNote}>Rentify Encrypted Gate • v1.4.0</Text>
     </SafeAreaView>
   );
 }

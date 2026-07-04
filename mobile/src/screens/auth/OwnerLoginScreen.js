@@ -39,7 +39,7 @@ export default function OwnerLoginScreen({ navigation, route }) {
   const triggerBiometricAuth = async () => {
     try {
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Unlock RentFlow Landlord Dashboard',
+        promptMessage: 'Unlock Rentify Landlord Dashboard',
         cancelLabel: 'Use Password',
         disableDeviceFallback: false,
       });
@@ -50,7 +50,7 @@ export default function OwnerLoginScreen({ navigation, route }) {
         const storedToken = await AsyncStorage.getItem('accessToken');
         if (storedToken) {
           // Verify profile or simply log in
-          Alert.alert('Unlocked', 'Welcome back to RentFlow!', [
+          Alert.alert('Unlocked', 'Welcome back to Rentify!', [
             { text: 'Enter Dashboard', onPress: () => route.params?.onLoginSuccess('owner') }
           ]);
         } else {

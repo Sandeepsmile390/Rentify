@@ -7,11 +7,21 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Screens
-import HomeScreen from './src/screens/HomeScreen';
-import BillsScreen from './src/screens/BillsScreen';
-import ChatScreen from './src/screens/ChatScreen';
-import ProfileScreen from './src/screens/ProfileScreen';
+// Tenant Screens
+import TenantHomeScreen from './src/screens/tenant/HomeScreen';
+import TenantBillsScreen from './src/screens/tenant/BillsScreen';
+import TenantChatScreen from './src/screens/tenant/ChatScreen';
+import TenantProfileScreen from './src/screens/tenant/ProfileScreen';
+import DocumentUploadScreen from './src/screens/tenant/DocumentUploadScreen';
+
+// Owner Screens
+import OwnerDashboardScreen from './src/screens/owner/DashboardScreen';
+import OwnerPropertiesScreen from './src/screens/owner/PropertiesScreen';
+import OwnerTenantsScreen from './src/screens/owner/TenantsScreen';
+import OwnerTenantDetailScreen from './src/screens/owner/TenantDetailScreen';
+import OwnerChatsScreen from './src/screens/owner/ChatsScreen';
+import OwnerChatConversationScreen from './src/screens/owner/ChatConversationScreen';
+import OwnerProfileScreen from './src/screens/owner/ProfileScreen';
 
 // Auth & Security Screens
 import RoleSelectScreen from './src/screens/auth/RoleSelectScreen';
@@ -26,14 +36,14 @@ import AppLockSettingsScreen from './src/screens/AppLockSettingsScreen';
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
-// Bottom Tab Navigation for logged-in & unlocked app
-function MainTabs({ navigation, route }) {
+// Tenant Tab Layout
+function TenantTabs({ route }) {
   const { onLogout } = route.params || {};
 
   return (
     <Tab.Navigator
       screenOptions={{
-        tabBarActiveTintColor: '#4F46E5', // Indigo accent
+        tabBarActiveTintColor: '#4F46E5',
         tabBarInactiveTintColor: '#94A3B8',
         tabBarStyle: {
           backgroundColor: '#FFFFFF',
@@ -59,23 +69,84 @@ function MainTabs({ navigation, route }) {
     >
       <Tab.Screen 
         name="HomeTab" 
-        component={HomeScreen} 
-        options={{ title: 'RentFlow Portal' }}
+        component={TenantHomeScreen} 
+        options={{ title: 'Rentify Portal' }}
       />
       <Tab.Screen 
         name="BillsTab" 
-        component={BillsScreen} 
+        component={TenantBillsScreen} 
         options={{ title: 'My Bills' }}
       />
       <Tab.Screen 
         name="ChatTab" 
-        component={ChatScreen} 
+        component={TenantChatScreen} 
         options={{ title: 'Owner Chat' }}
       />
       <Tab.Screen 
         name="ProfileTab" 
-        component={ProfileScreen} 
+        component={TenantProfileScreen} 
         options={{ title: 'My Profile' }}
+        initialParams={{ onLogout }}
+      />
+    </Tab.Navigator>
+  );
+}
+
+// Owner Tab Layout
+function OwnerTabs({ route }) {
+  const { onLogout } = route.params || {};
+
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        tabBarActiveTintColor: '#4F46E5',
+        tabBarInactiveTintColor: '#94A3B8',
+        tabBarStyle: {
+          backgroundColor: '#FFFFFF',
+          borderTopWidth: 1,
+          borderTopColor: '#E2E8F0',
+          height: 60,
+          paddingBottom: 8,
+          paddingTop: 8,
+        },
+        headerStyle: {
+          backgroundColor: '#FFFFFF',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.05,
+          shadowRadius: 10,
+          elevation: 2,
+        },
+        headerTitleStyle: {
+          fontWeight: 'bold',
+          color: '#0F172A',
+        },
+      }}
+    >
+      <Tab.Screen 
+        name="DashboardTab" 
+        component={OwnerDashboardScreen} 
+        options={{ title: 'Rentify Owner' }}
+      />
+      <Tab.Screen 
+        name="Properties" 
+        component={OwnerPropertiesScreen} 
+        options={{ title: 'Properties' }}
+      />
+      <Tab.Screen 
+        name="Tenants" 
+        component={OwnerTenantsScreen} 
+        options={{ title: 'Tenants' }}
+      />
+      <Tab.Screen 
+        name="Chats" 
+        component={OwnerChatsScreen} 
+        options={{ title: 'Messages' }}
+      />
+      <Tab.Screen 
+        name="ProfileTab" 
+        component={OwnerProfileScreen} 
+        options={{ title: 'Profile' }}
         initialParams={{ onLogout }}
       />
     </Tab.Navigator>
@@ -138,7 +209,7 @@ export default function App() {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#4F46E5" />
-        <Text style={styles.loadingText}>Initializing RentFlow Core...</Text>
+        <Text style={styles.loadingText}>Initializing Rentify Core...</Text>
       </View>
     );
   }
@@ -204,11 +275,21 @@ export default function App() {
         {/* State 3: Logged In & Unlocked (Main Stack & Tab Subviews) */}
         {isLogged && !isLocked && (
           <>
-            <Stack.Screen 
-              name="MainTabs" 
-              component={MainTabs} 
-              initialParams={{ onLogout: handleLogout }}
-            />
+            {role === 'owner' ? (
+              <Stack.Screen 
+                name="MainTabs" 
+                component={OwnerTabs} 
+                initialParams={{ onLogout: handleLogout }}
+              />
+            ) : (
+              <Stack.Screen 
+                name="MainTabs" 
+                component={TenantTabs} 
+                initialParams={{ onLogout: handleLogout }}
+              />
+            )}
+            
+            {/* Common sub-screens */}
             <Stack.Screen 
               name="ActiveSessions" 
               component={ActiveSessionsScreen} 
@@ -218,6 +299,25 @@ export default function App() {
               name="AppLockSettings" 
               component={AppLockSettingsScreen} 
               options={{ headerShown: true, title: 'Security Settings' }}
+            />
+
+            {/* Tenant specific sub-screens */}
+            <Stack.Screen 
+              name="DocumentUpload" 
+              component={DocumentUploadScreen} 
+              options={{ headerShown: false }}
+            />
+
+            {/* Landlord specific sub-screens */}
+            <Stack.Screen 
+              name="TenantDetail" 
+              component={OwnerTenantDetailScreen} 
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen 
+              name="ChatConversation" 
+              component={OwnerChatConversationScreen} 
+              options={{ headerShown: false }}
             />
           </>
         )}

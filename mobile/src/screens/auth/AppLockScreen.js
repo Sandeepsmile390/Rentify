@@ -29,7 +29,7 @@ export default function AppLockScreen({ navigation, route }) {
   const triggerBiometricUnlock = async () => {
     try {
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Unlock RentFlow',
+        promptMessage: 'Unlock Rentify',
         cancelLabel: 'Use PIN',
       });
       if (result.success) {
@@ -87,7 +87,7 @@ export default function AppLockScreen({ navigation, route }) {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Enter App PIN</Text>
-        <Text style={styles.subtitle}>Enter your 4-digit passcode to unlock RentFlow</Text>
+        <Text style={styles.subtitle}>Enter your 4-digit passcode to unlock Rentify</Text>
       </View>
 
       {/* Dots representation */}

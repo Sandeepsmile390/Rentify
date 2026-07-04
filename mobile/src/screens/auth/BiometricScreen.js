@@ -41,7 +41,7 @@ export default function BiometricScreen({ navigation, route }) {
       }
 
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Unlock RentFlow Portal',
+        promptMessage: 'Unlock Rentify Portal',
         fallbackLabel: 'Use PIN passcode',
         disableDeviceFallback: false
       });
@@ -78,8 +78,8 @@ export default function BiometricScreen({ navigation, route }) {
           <View style={styles.onlineDot} />
         </View>
 
-        <Text style={styles.userName}>Ravi Kumar</Text>
-        <Text style={styles.userRole}>Verified Tenant</Text>
+        <Text style={styles.userName}>Resident</Text>
+        <Text style={styles.userRole}>Verified User</Text>
 
         <Animated.View style={[styles.fingerprintWrapper, { transform: [{ scale: pulseAnim }] }]}>
           <TouchableOpacity style={styles.fingerprintBtn} onPress={triggerBiometrics}>
@@ -87,7 +87,7 @@ export default function BiometricScreen({ navigation, route }) {
           </TouchableOpacity>
         </Animated.View>
 
-        <Text style={styles.hintText}>Tap sensor to unlock RentFlow</Text>
+        <Text style={styles.hintText}>Tap sensor to unlock Rentify</Text>
       </View>
 
       <View style={styles.footer}>

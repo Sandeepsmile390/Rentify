@@ -136,8 +136,54 @@ export const billService = {
   payBill: async (billId, amount, method, note) => {
     const response = await api.post('/payments', { billId, amount, method, note });
     return response.data;
+  },
+  generateMonthlyBills: async (billingMonth) => {
+    const response = await api.post('/bills/generate-monthly', { billingMonth });
+    return response.data;
   }
 };
+
+export const propertyService = {
+  getProperties: async () => {
+    const response = await api.get('/properties');
+    return response.data;
+  },
+  createProperty: async (propertyData) => {
+    const response = await api.post('/properties', propertyData);
+    return response.data;
+  },
+  createRoom: async (propertyId, roomData) => {
+    const response = await api.post(`/properties/${propertyId}/rooms`, roomData);
+    return response.data;
+  }
+};
+
+export const tenantService = {
+  getTenants: async () => {
+    const response = await api.get('/tenants');
+    return response.data;
+  },
+  createTenant: async (tenantData) => {
+    const response = await api.post('/tenants', tenantData);
+    return response.data;
+  },
+  uploadDocument: async (tenantId, docKey, fileUri, fileName = 'upload.jpg', fileType = 'image/jpeg') => {
+    const formData = new FormData();
+    formData.append('document', {
+      uri: fileUri,
+      name: fileName,
+      type: fileType
+    });
+    formData.append('docKey', docKey);
+    const response = await api.post(`/documents/upload?tenantId=${tenantId}`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+    return response.data;
+  }
+};
+
 
 export const chatService = {
   getChats: async () => {

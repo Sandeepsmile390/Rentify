@@ -49,7 +49,7 @@ export default function FirstLoginScreen({ route, navigation }) {
       if (res.success) {
         Alert.alert(
           'Security Updated',
-          'Your new security password is set up successfully. Welcome to RentFlow!',
+          'Your new security password is set up successfully. Welcome to Rentify!',
           [{ text: 'Proceed', onPress: () => onLoginComplete() }]
         );
       }

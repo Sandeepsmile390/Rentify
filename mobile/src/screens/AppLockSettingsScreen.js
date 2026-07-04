@@ -44,7 +44,7 @@ export default function AppLockSettingsScreen({ navigation }) {
       // Configuration prompt for PIN code
       Alert.prompt(
         'Set App PIN Passcode',
-        'Enter a 4-digit code to protect your RentFlow application:',
+        'Enter a 4-digit code to protect your Rentify application:',
         async (enteredPin) => {
           if (!enteredPin || enteredPin.length !== 4 || isNaN(enteredPin)) {
             Alert.alert('Invalid PIN', 'Passcode must be exactly 4 numeric digits.');
@@ -153,7 +153,7 @@ export default function AppLockSettingsScreen({ navigation }) {
           <View style={styles.settingCard}>
             <View style={styles.settingInfo}>
               <Text style={styles.settingLabel}>Enable Passcode PIN Lock</Text>
-              <Text style={styles.settingDesc}>Require a 4-digit code to open the RentFlow application</Text>
+              <Text style={styles.settingDesc}>Require a 4-digit code to open the Rentify application</Text>
             </View>
             <Switch
               value={pinEnabled}
