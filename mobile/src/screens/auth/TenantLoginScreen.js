@@ -5,7 +5,7 @@ import {
   Platform, ScrollView
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as LocalAuthentication from 'expo-native-local-authentication'; // Wait, let's use expo-local-authentication
+import * as LocalAuthentication from 'expo-local-authentication';
 import { authService } from '../../services/api';
 
 export default function TenantLoginScreen({ navigation, route }) {
