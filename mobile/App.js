@@ -4,8 +4,8 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getSecureItem, deleteSecureItem } from './src/services/api';
 
 // Tenant Screens
 import TenantHomeScreen from './src/screens/tenant/HomeScreen';
@@ -166,7 +166,7 @@ export default function App() {
   const bootstrapApp = async () => {
     try {
       // Check auth token
-      const token = await SecureStore.getItemAsync('accessToken');
+      const token = await getSecureItem('accessToken');
       const savedRole = await AsyncStorage.getItem('last_selected_role');
       
       if (token) {
@@ -199,8 +199,8 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    await SecureStore.deleteItemAsync('accessToken');
-    await SecureStore.deleteItemAsync('refreshToken');
+    await deleteSecureItem('accessToken');
+    await deleteSecureItem('refreshToken');
     setIsLogged(false);
     setIsLocked(false);
   };

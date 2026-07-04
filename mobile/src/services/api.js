@@ -1,5 +1,41 @@
 import axios from 'axios';
+import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+
+// Secure storage helpers that automatically fall back to AsyncStorage on Web
+export const getSecureItem = async (key) => {
+  if (Platform.OS === 'web') {
+    return AsyncStorage.getItem(key);
+  }
+  try {
+    return await SecureStore.getItemAsync(key);
+  } catch (e) {
+    return AsyncStorage.getItem(key);
+  }
+};
+
+export const setSecureItem = async (key, value) => {
+  if (Platform.OS === 'web') {
+    return AsyncStorage.setItem(key, value);
+  }
+  try {
+    await SecureStore.setItemAsync(key, value);
+  } catch (e) {
+    await AsyncStorage.setItem(key, value);
+  }
+};
+
+export const deleteSecureItem = async (key) => {
+  if (Platform.OS === 'web') {
+    return AsyncStorage.removeItem(key);
+  }
+  try {
+    await SecureStore.deleteItemAsync(key);
+  } catch (e) {
+    await AsyncStorage.removeItem(key);
+  }
+};
 
 // API base URL — reads from mobile/.env (EXPO_PUBLIC_API_URL) with fallback for local dev.
 // For physical device testing: change the IP in .env to your machine's LAN IP (e.g. 192.168.1.x)
@@ -16,8 +52,8 @@ const api = axios.create({
 api.interceptors.request.use(
   async (config) => {
     try {
-      const accessToken = await SecureStore.getItemAsync('accessToken');
-      const refreshToken = await SecureStore.getItemAsync('refreshToken');
+      const accessToken = await getSecureItem('accessToken');
+      const refreshToken = await getSecureItem('refreshToken');
       
       if (accessToken) {
         config.headers.Authorization = `Bearer ${accessToken}`;
@@ -42,10 +78,10 @@ api.interceptors.response.use(
       // but in React Native the login response contains tokens or we can parse them.
       // If server returns access/refresh token in the body for mobile clients:
       if (response.data.accessToken) {
-        await SecureStore.setItemAsync('accessToken', response.data.accessToken);
+        await setSecureItem('accessToken', response.data.accessToken);
       }
       if (response.data.refreshToken) {
-        await SecureStore.setItemAsync('refreshToken', response.data.refreshToken);
+        await setSecureItem('refreshToken', response.data.refreshToken);
       }
     }
     return response;
@@ -54,8 +90,8 @@ api.interceptors.response.use(
     // Handle token expiration / session invalidation
     if (error.response && (error.response.status === 401 || error.response.status === 403)) {
       // Clear token store
-      await SecureStore.deleteItemAsync('accessToken');
-      await SecureStore.deleteItemAsync('refreshToken');
+      await deleteSecureItem('accessToken');
+      await deleteSecureItem('refreshToken');
     }
     return Promise.reject(error);
   }
@@ -108,16 +144,16 @@ export const authService = {
   logoutAllSessions: async () => {
     const response = await api.post('/auth/logout-all');
     // Clear local storage
-    await SecureStore.deleteItemAsync('accessToken');
-    await SecureStore.deleteItemAsync('refreshToken');
+    await deleteSecureItem('accessToken');
+    await deleteSecureItem('refreshToken');
     return response.data;
   },
 
   // Logout current session
   logout: async () => {
     const response = await api.post('/auth/logout');
-    await SecureStore.deleteItemAsync('accessToken');
-    await SecureStore.deleteItemAsync('refreshToken');
+    await deleteSecureItem('accessToken');
+    await deleteSecureItem('refreshToken');
     return response.data;
   },
 
