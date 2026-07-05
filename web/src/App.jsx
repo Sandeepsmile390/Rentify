@@ -50,6 +50,10 @@ export default function App() {
   const [showMoveOutModal, setShowMoveOutModal] = useState(false);
   const [showEditBillModal, setShowEditBillModal] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState(null);
+  const [showEditProperty, setShowEditProperty] = useState(false);
+  const [editPropertyForm, setEditPropertyForm] = useState({ name: '', type: 'Residential', totalRooms: '10', address: '', description: '', floors: '1' });
+  const [showEditTenant, setShowEditTenant] = useState(false);
+  const [editTenantForm, setEditTenantForm] = useState({});
   const [selectedBill, setSelectedBill] = useState(null);
 
   // Detail panel tab
@@ -365,6 +369,30 @@ export default function App() {
     }
   };
 
+  // Update Property
+  const handleUpdateProperty = async (e) => {
+    e.preventDefault();
+    if (!editPropertyForm.name) return;
+    try {
+      const response = await apiFetch(`${API_BASE}/properties/${selectedProperty.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editPropertyForm)
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setProperties(properties.map(p => p.id === data.id ? data : p));
+        setSelectedProperty(data);
+        setShowEditProperty(false);
+        triggerToast(`🏢 Updated property: ${data.name}`);
+      } else {
+        alert(data.message || (data.errors ? JSON.stringify(data.errors) : "Failed to update property"));
+      }
+    } catch (error) {
+      alert("Failed to update property: " + error.message);
+    }
+  };
+
   // Delete Property
   const handleDeleteProperty = async (propertyId) => {
     if (!window.confirm("Are you sure you want to permanently delete this property? This action cannot be undone.")) {
@@ -627,6 +655,39 @@ export default function App() {
       fetchAllData();
     } catch (error) {
       alert("Failed to create tenant: " + error.message);
+    }
+  };
+
+  // Update Tenant
+  const handleUpdateTenant = async (e) => {
+    e.preventDefault();
+    try {
+      const parsedForm = {
+        ...editTenantForm,
+        agreementDuration: editTenantForm.agreementDuration !== undefined ? parseInt(editTenantForm.agreementDuration || '0', 10) : undefined,
+        rentAmount: editTenantForm.rentAmount !== undefined ? parseFloat(editTenantForm.rentAmount || '0') : undefined,
+        securityDeposit: editTenantForm.securityDeposit !== undefined ? parseFloat(editTenantForm.securityDeposit || '0') : undefined,
+        electricityRate: editTenantForm.electricityRate !== undefined ? parseFloat(editTenantForm.electricityRate || '0') : undefined,
+        waterCharges: editTenantForm.waterCharges !== undefined ? parseFloat(editTenantForm.waterCharges || '0') : undefined,
+      };
+
+      const response = await apiFetch(`${API_BASE}/tenants/${selectedTenant.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsedForm)
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setTenants(tenants.map(t => t.id === data.id ? data : t));
+        setSelectedTenant(data);
+        setShowEditTenant(false);
+        triggerToast(`👤 Updated tenant: ${data.name}`);
+        fetchAllData();
+      } else {
+        alert(data.message || (data.errors ? JSON.stringify(data.errors) : "Failed to update tenant"));
+      }
+    } catch (error) {
+      alert("Failed to update tenant: " + error.message);
     }
   };
 
@@ -1446,9 +1507,24 @@ export default function App() {
                         </span>
                       </div>
                       
-                      <button className="btn-primary" onClick={() => setShowAddRoom(true)}>
-                        <Plus size={16} /> Add Room/Shop
-                      </button>
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        <button className="btn-secondary" onClick={() => {
+                          setEditPropertyForm({
+                            name: selectedProperty.name,
+                            type: selectedProperty.type,
+                            totalRooms: selectedProperty.totalRooms.toString(),
+                            address: selectedProperty.address || '',
+                            description: selectedProperty.description || '',
+                            floors: (selectedProperty.floors || 1).toString()
+                          });
+                          setShowEditProperty(true);
+                        }}>
+                          ✏️ Edit Building
+                        </button>
+                        <button className="btn-primary" onClick={() => setShowAddRoom(true)}>
+                          <Plus size={16} /> Add Room/Shop
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -1880,6 +1956,12 @@ export default function App() {
                     </div>
 
                     <div style={{ display: 'flex', gap: '10px' }}>
+                      <button className="btn-secondary" onClick={() => {
+                        setEditTenantForm({ ...selectedTenant });
+                        setShowEditTenant(true);
+                      }}>
+                        ✏️ Edit Tenant
+                      </button>
                       {selectedTenant.status !== 'Left' && (
                         <button className="btn-primary" style={{ background: 'var(--color-warning)', color: '#1E1B4B' }} onClick={() => setShowMoveOutModal(true)}>
                           <UserMinus size={16} /> Move Out Tenant
@@ -4315,6 +4397,181 @@ export default function App() {
               )}
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT PROPERTY */}
+      {showEditProperty && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '500px' }}>
+            <div className="modal-header">
+              <h2>Edit Estate Details</h2>
+              <button className="close-btn" onClick={() => setShowEditProperty(false)}><X size={20} /></button>
+            </div>
+            
+            <form onSubmit={handleUpdateProperty} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div className="form-group">
+                <label>Property Name</label>
+                <input type="text" className="input-field" placeholder="House C or Commercial Mall" value={editPropertyForm.name} onChange={(e) => setEditPropertyForm({ ...editPropertyForm, name: e.target.value })} required />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label>Estate Type</label>
+                  <select className="input-field" value={editPropertyForm.type} onChange={(e) => setEditPropertyForm({ ...editPropertyForm, type: e.target.value })}>
+                    <option value="Residential">Residential (Rooms/Flats)</option>
+                    <option value="Commercial">Commercial (Shops/Complexes)</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Total Rooms/Units</label>
+                  <input type="number" className="input-field" placeholder="10" value={editPropertyForm.totalRooms} onChange={(e) => setEditPropertyForm({ ...editPropertyForm, totalRooms: e.target.value })} required />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label>Property Address</label>
+                  <input type="text" className="input-field" placeholder="e.g. 123, Rose Lane, Patna" value={editPropertyForm.address} onChange={(e) => setEditPropertyForm({ ...editPropertyForm, address: e.target.value })} />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label>Description / Details</label>
+                  <input type="text" className="input-field" placeholder="e.g. Located near city center" value={editPropertyForm.description} onChange={(e) => setEditPropertyForm({ ...editPropertyForm, description: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label>Number of Floors</label>
+                  <input type="number" className="input-field" placeholder="1" value={editPropertyForm.floors} onChange={(e) => setEditPropertyForm({ ...editPropertyForm, floors: e.target.value })} />
+                </div>
+              </div>
+              <button type="submit" className="btn-primary" style={{ padding: '12px' }}>Save Changes</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT TENANT */}
+      {showEditTenant && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '750px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="modal-header">
+              <h2>Edit Tenant Details</h2>
+              <button className="close-btn" onClick={() => setShowEditTenant(false)}><X size={20} /></button>
+            </div>
+            
+            <form onSubmit={handleUpdateTenant} style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label>Full Name</label>
+                  <input type="text" className="input-field" value={editTenantForm.name || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, name: e.target.value })} required />
+                </div>
+                <div className="form-group">
+                  <label>Father's Name</label>
+                  <input type="text" className="input-field" value={editTenantForm.fatherName || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, fatherName: e.target.value })} required />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label>Phone Number</label>
+                  <input type="text" className="input-field" value={editTenantForm.phone || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, phone: e.target.value })} required />
+                </div>
+                <div className="form-group">
+                  <label>Alternative Contact</label>
+                  <input type="text" className="input-field" value={editTenantForm.altPhone || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, altPhone: e.target.value })} />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label>Email Address</label>
+                  <input type="email" className="input-field" value={editTenantForm.email || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, email: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label>Occupation</label>
+                  <input type="text" className="input-field" value={editTenantForm.occupation || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, occupation: e.target.value })} required />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label>Aadhaar Number (12 Digit)</label>
+                  <input type="text" className="input-field" value={editTenantForm.aadhaar || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, aadhaar: e.target.value })} required />
+                </div>
+                <div className="form-group">
+                  <label>PAN Number (10 character alphanumeric)</label>
+                  <input type="text" className="input-field" value={editTenantForm.pan || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, pan: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Permanent Address</label>
+                <textarea className="input-field" value={editTenantForm.permanentAddress || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, permanentAddress: e.target.value })} required />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                <div className="form-group">
+                  <label>Gender</label>
+                  <select className="input-field" value={editTenantForm.gender || 'Male'} onChange={(e) => setEditTenantForm({ ...editTenantForm, gender: e.target.value })}>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Date of Birth</label>
+                  <input type="date" className="input-field" value={editTenantForm.dob || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, dob: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label>Company / College</label>
+                  <input type="text" className="input-field" value={editTenantForm.companyCollege || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, companyCollege: e.target.value })} />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                <div className="form-group">
+                  <label>Agreement Duration (Months)</label>
+                  <input type="number" className="input-field" value={editTenantForm.agreementDuration || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, agreementDuration: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label>Rent Amount</label>
+                  <input type="number" className="input-field" value={editTenantForm.rentAmount || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, rentAmount: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label>Security Deposit</label>
+                  <input type="number" className="input-field" value={editTenantForm.securityDeposit || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, securityDeposit: e.target.value })} />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label>Electricity Unit Rate</label>
+                  <input type="number" className="input-field" value={editTenantForm.electricityRate || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, electricityRate: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label>Water Charges / Month</label>
+                  <input type="number" className="input-field" value={editTenantForm.waterCharges || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, waterCharges: e.target.value })} />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label>Driving License</label>
+                  <input type="text" className="input-field" value={editTenantForm.drivingLicense || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, drivingLicense: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label>Vehicle Details</label>
+                  <input type="text" className="input-field" value={editTenantForm.vehicleDetails || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, vehicleDetails: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Notes</label>
+                <textarea className="input-field" value={editTenantForm.notes || ''} onChange={(e) => setEditTenantForm({ ...editTenantForm, notes: e.target.value })} />
+              </div>
+
+              <button type="submit" className="btn-primary" style={{ padding: '12px' }}>Save Changes</button>
+            </form>
           </div>
         </div>
       )}

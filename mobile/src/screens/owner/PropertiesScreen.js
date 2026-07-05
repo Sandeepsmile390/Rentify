@@ -14,6 +14,9 @@ export default function PropertiesScreen({ route, navigation }) {
   const [showAddRoom, setShowAddRoom] = useState(false);
   const [selectedPropId, setSelectedPropId] = useState(null);
   const [newRoom, setNewRoom] = useState({ roomNumber: '', type: 'Single Room', floor: 'Ground' });
+  const [showEditProp, setShowEditProp] = useState(false);
+  const [editPropId, setEditPropId] = useState(null);
+  const [editPropForm, setEditPropForm] = useState({ name: '', type: 'Residential', totalRooms: '10', address: '', description: '', floors: '1' });
 
   useEffect(() => {
     fetchProperties();
@@ -50,6 +53,30 @@ export default function PropertiesScreen({ route, navigation }) {
       fetchProperties();
     } catch (e) {
       Alert.alert('Error', 'Failed to create property.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateProperty = async () => {
+    if (!editPropForm.name.trim()) {
+      Alert.alert('Validation Error', 'Property name is required.');
+      return;
+    }
+    try {
+      setLoading(true);
+      const parsedData = {
+        ...editPropForm,
+        totalRooms: editPropForm.totalRooms ? parseInt(editPropForm.totalRooms, 10) : 0,
+        floors: editPropForm.floors ? parseInt(editPropForm.floors, 10) : 1
+      };
+      await propertyService.updateProperty(editPropId, parsedData);
+      Alert.alert('Success', 'Property updated successfully!');
+      setShowEditProp(false);
+      fetchProperties();
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Error', 'Failed to update property details.');
     } finally {
       setLoading(false);
     }
@@ -126,15 +153,34 @@ export default function PropertiesScreen({ route, navigation }) {
                     <View style={styles.divider} />
                     <View style={styles.roomsHeader}>
                       <Text style={styles.roomsTitle}>Rooms ({p.rooms ? p.rooms.length : 0})</Text>
-                      <TouchableOpacity 
-                        style={styles.addRoomBtn}
-                        onPress={() => {
-                          setSelectedPropId(p.id);
-                          setShowAddRoom(true);
-                        }}
-                      >
-                        <Text style={styles.addRoomBtnText}>+ Add Room</Text>
-                      </TouchableOpacity>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity 
+                          style={[styles.addRoomBtn, { backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#CBD5E1' }]}
+                          onPress={() => {
+                            setEditPropId(p.id);
+                            setEditPropForm({
+                              name: p.name,
+                              type: p.type,
+                              totalRooms: p.totalRooms ? p.totalRooms.toString() : '0',
+                              address: p.address || p.location || '',
+                              description: p.description || '',
+                              floors: p.floors ? p.floors.toString() : '1'
+                            });
+                            setShowEditProp(true);
+                          }}
+                        >
+                          <Text style={[styles.addRoomBtnText, { color: '#475569' }]}>Edit Complex</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                          style={styles.addRoomBtn}
+                          onPress={() => {
+                            setSelectedPropId(p.id);
+                            setShowAddRoom(true);
+                          }}
+                        >
+                          <Text style={styles.addRoomBtnText}>+ Add Room</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
 
                     <View style={styles.roomsGrid}>
@@ -189,6 +235,61 @@ export default function PropertiesScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
           </View>
+        </View>
+      {/* MODAL: EDIT PROPERTY */}
+      <Modal visible={showEditProp} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }} showsVerticalScrollIndicator={false}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Edit Complex Details</Text>
+              
+              <Text style={styles.label}>Building Name</Text>
+              <TextInput 
+                style={styles.input} 
+                value={editPropForm.name}
+                onChangeText={(t) => setEditPropForm({ ...editPropForm, name: t })}
+              />
+
+              <Text style={styles.label}>Address</Text>
+              <TextInput 
+                style={styles.input} 
+                value={editPropForm.address}
+                onChangeText={(t) => setEditPropForm({ ...editPropForm, address: t })}
+              />
+
+              <Text style={styles.label}>Description</Text>
+              <TextInput 
+                style={styles.input} 
+                value={editPropForm.description}
+                onChangeText={(t) => setEditPropForm({ ...editPropForm, description: t })}
+              />
+
+              <Text style={styles.label}>Floors</Text>
+              <TextInput 
+                style={styles.input} 
+                keyboardType="numeric"
+                value={editPropForm.floors}
+                onChangeText={(t) => setEditPropForm({ ...editPropForm, floors: t })}
+              />
+
+              <Text style={styles.label}>Total Rooms/Units</Text>
+              <TextInput 
+                style={styles.input} 
+                keyboardType="numeric"
+                value={editPropForm.totalRooms}
+                onChangeText={(t) => setEditPropForm({ ...editPropForm, totalRooms: t })}
+              />
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowEditProp(false)}>
+                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.submitBtn} onPress={handleUpdateProperty}>
+                  <Text style={styles.submitBtnText}>Save Changes</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
         </View>
       </Modal>
 

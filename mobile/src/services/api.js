@@ -191,6 +191,10 @@ export const propertyService = {
   createRoom: async (propertyId, roomData) => {
     const response = await api.post(`/properties/${propertyId}/rooms`, roomData);
     return response.data;
+  },
+  updateProperty: async (propertyId, propertyData) => {
+    const response = await api.patch(`/properties/${propertyId}`, propertyData);
+    return response.data;
   }
 };
 
@@ -216,6 +220,10 @@ export const tenantService = {
         'Content-Type': 'multipart/form-data'
       }
     });
+    return response.data;
+  },
+  updateTenant: async (tenantId, tenantData) => {
+    const response = await api.patch(`/tenants/${tenantId}`, tenantData);
     return response.data;
   }
 };

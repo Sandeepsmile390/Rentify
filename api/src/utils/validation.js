@@ -11,13 +11,13 @@ const tenantSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters').max(100),
   fatherName: z.string().min(2, 'Father name must be at least 2 characters').max(100),
   phone: z.string().regex(/^[6-9]\d{9}$/, 'Invalid phone format'),
-  altPhone: z.string().regex(/^[6-9]\d{9}$/, 'Invalid alt phone format').optional().nullable(),
-  email: z.string().email('Invalid email').optional().nullable(),
+  altPhone: z.string().regex(/^[6-9]\d{9}$/, 'Invalid alt phone format').or(z.literal('')).optional().nullable(),
+  email: z.string().email('Invalid email').or(z.literal('')).optional().nullable(),
   occupation: z.string().min(2, 'Occupation is required').max(100),
   
   // Validation for Indian Aadhaar and PAN numbers
   aadhaar: z.string().regex(/(^\d{12}$)|(^\d{4} \d{4} \d{4}$)/, 'Aadhaar must be 12 digits or formatted as "0000 0000 0000"'),
-  pan: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, 'PAN must be 10 characters alphanumeric (e.g. ABCDE1234F)'),
+  pan: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, 'PAN must be 10 characters alphanumeric (e.g. ABCDE1234F)').or(z.literal('')).optional().nullable(),
   
   permanentAddress: z.string().min(5, 'Permanent address must be at least 5 characters'),
   currentAddress: z.string().optional().nullable(),
@@ -84,6 +84,47 @@ const paymentSchema = z.object({
   note: z.string().optional()
 });
 
+const propertyEditSchema = z.object({
+  name: z.string().min(2, 'Property name is too short').max(256).optional(),
+  type: z.enum(['Residential', 'Commercial']).optional(),
+  totalRooms: z.coerce.number().int().min(0).optional(),
+  address: z.string().optional().nullable(),
+  location: z.string().optional().nullable(),
+  description: z.string().optional().nullable(),
+  floors: z.coerce.number().int().min(1).optional()
+});
+
+const tenantEditSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters').max(100).optional(),
+  fatherName: z.string().min(2, 'Father name must be at least 2 characters').max(100).optional(),
+  phone: z.string().regex(/^[6-9]\d{9}$/, 'Invalid phone format').optional(),
+  altPhone: z.string().regex(/^[6-9]\d{9}$/, 'Invalid alt phone format').or(z.literal('')).optional().nullable(),
+  email: z.string().email('Invalid email').or(z.literal('')).optional().nullable(),
+  occupation: z.string().min(2, 'Occupation is required').max(100).optional(),
+  aadhaar: z.string().regex(/(^\d{12}$)|(^\d{4} \d{4} \d{4}$)/, 'Aadhaar must be 12 digits or formatted as "0000 0000 0000"').optional(),
+  pan: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, 'PAN must be 10 characters alphanumeric (e.g. ABCDE1234F)').or(z.literal('')).optional().nullable(),
+  permanentAddress: z.string().min(5, 'Permanent address must be at least 5 characters').optional(),
+  currentAddress: z.string().optional().nullable(),
+  propertyId: z.string().optional(),
+  roomNumber: z.string().optional(),
+  roomType: z.enum(['Room', 'Shop', 'Flat']).optional(),
+  moveInDate: z.string().optional(),
+  agreementDuration: z.coerce.number().int().min(1, 'Agreement duration must be positive').optional(),
+  rentAmount: z.coerce.number().min(0, 'Rent amount cannot be negative').optional(),
+  securityDeposit: z.coerce.number().min(0, 'Security deposit cannot be negative').optional(),
+  electricityRate: z.coerce.number().min(0, 'Electricity unit rate cannot be negative').optional(),
+  waterCharges: z.coerce.number().min(0, 'Water charges cannot be negative').optional(),
+  photo: z.string().optional(),
+  emergencyContact: z.string().optional().nullable(),
+  gender: z.string().optional().nullable(),
+  dob: z.string().optional().nullable(),
+  companyCollege: z.string().optional().nullable(),
+  drivingLicense: z.string().optional().nullable(),
+  vehicleDetails: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+  roomId: z.string().optional().nullable()
+});
+
 module.exports = {
   loginSchema,
   tenantSchema,
@@ -91,5 +132,7 @@ module.exports = {
   billSchema,
   commentSchema,
   chatSchema,
-  paymentSchema
+  paymentSchema,
+  propertyEditSchema,
+  tenantEditSchema
 };

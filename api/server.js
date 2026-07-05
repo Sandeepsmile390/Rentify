@@ -20,7 +20,8 @@ const { eq, and, or, desc, ne } = require('drizzle-orm');
 const cryptoUtils = require('./src/utils/crypto');
 const { 
   loginSchema, tenantSchema, propertySchema, 
-  billSchema, commentSchema, chatSchema, paymentSchema 
+  billSchema, commentSchema, chatSchema, paymentSchema,
+  propertyEditSchema, tenantEditSchema
 } = require('./src/utils/validation');
 
 // Security Middlewares
@@ -508,11 +509,45 @@ app.delete('/api/properties/:id', authenticateJWT, authorizeRoles('owner'), asyn
       });
     }
 
+    // 2b. Delete associated rooms first to prevent foreign key check errors
+    await db.delete(rooms).where(eq(rooms.propertyId, propertyId));
+
     // 3. Delete property
     await db.delete(properties).where(eq(properties.id, propertyId));
     await logAuditAction(req, 'DELETE_PROPERTY', propArr[0], null);
 
     res.json({ success: true, message: 'Property deleted successfully.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/properties/:id', authenticateJWT, authorizeRoles('owner'), async (req, res, next) => {
+  try {
+    const valid = propertyEditSchema.safeParse(req.body);
+    if (!valid.success) return res.status(400).json({ errors: valid.error.format() });
+
+    const propertyId = req.params.id;
+    const propArr = await db.select().from(properties).where(eq(properties.id, propertyId));
+    if (propArr.length === 0) return res.status(404).json({ message: 'Property not found.' });
+
+    const updates = {};
+    if (req.body.name !== undefined) updates.name = req.body.name;
+    if (req.body.type !== undefined) updates.type = req.body.type;
+    if (req.body.totalRooms !== undefined) {
+      updates.totalRooms = req.body.totalRooms;
+      updates.vacant = Math.max(0, req.body.totalRooms - propArr[0].occupied);
+    }
+    if (req.body.address !== undefined) updates.address = req.body.address;
+    if (req.body.location !== undefined) updates.address = req.body.location; // Support location field too
+    if (req.body.description !== undefined) updates.description = req.body.description;
+    if (req.body.floors !== undefined) updates.floors = req.body.floors;
+
+    await db.update(properties).set(updates).where(eq(properties.id, propertyId));
+    
+    const updatedProp = { ...propArr[0], ...updates };
+    await logAuditAction(req, 'UPDATE_PROPERTY', propArr[0], updatedProp);
+    res.json(updatedProp);
   } catch (error) {
     next(error);
   }
@@ -816,6 +851,84 @@ app.post('/api/tenants', authenticateJWT, authorizeRoles('owner'), async (req, r
       tenantLoginId: loginId,
       tempPassword: rawTempPassword  // Shown once to owner at check-in
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/tenants/:id', authenticateJWT, authorizeRoles('owner'), async (req, res, next) => {
+  try {
+    const valid = tenantEditSchema.safeParse(req.body);
+    if (!valid.success) {
+      const issues = valid.error.errors || valid.error.issues || [];
+      const errorMsg = issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      return res.status(400).json({ 
+        success: false,
+        message: `Validation failed: ${errorMsg}`,
+        errors: valid.error.format() 
+      });
+    }
+
+    const tenantId = req.params.id;
+    const tenantArr = await db.select().from(tenants).where(eq(tenants.id, tenantId));
+    if (tenantArr.length === 0) return res.status(404).json({ message: 'Tenant not found.' });
+    const oldTenant = tenantArr[0];
+
+    const updates = {};
+    const simpleFields = [
+      'name', 'fatherName', 'phone', 'altPhone', 'email', 'occupation',
+      'currentAddress', 'propertyId', 'roomNumber', 'roomType', 'moveInDate',
+      'agreementDuration', 'rentAmount', 'securityDeposit', 'electricityRate', 'waterCharges',
+      'photo', 'gender', 'dob', 'companyCollege', 'vehicleDetails', 'notes', 'roomId'
+    ];
+
+    for (const field of simpleFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+
+    // Encrypt sensitive fields
+    if (req.body.aadhaar !== undefined) updates.aadhaarEncrypted = cryptoUtils.encrypt(req.body.aadhaar);
+    if (req.body.pan !== undefined) updates.panEncrypted = cryptoUtils.encrypt(req.body.pan);
+    if (req.body.permanentAddress !== undefined) updates.permanentAddressEncrypted = cryptoUtils.encrypt(req.body.permanentAddress);
+    if (req.body.emergencyContact !== undefined) updates.emergencyContactEncrypted = cryptoUtils.encrypt(req.body.emergencyContact || '');
+    if (req.body.drivingLicense !== undefined) updates.drivingLicenseEncrypted = req.body.drivingLicense ? cryptoUtils.encrypt(req.body.drivingLicense) : null;
+
+    // Handle rentAmount changes which affects property revenue
+    if (updates.rentAmount !== undefined && updates.rentAmount !== oldTenant.rentAmount) {
+      const propArr = await db.select().from(properties).where(eq(properties.id, oldTenant.propertyId));
+      if (propArr.length > 0) {
+        const prop = propArr[0];
+        const newRev = prop.monthlyRevenue - oldTenant.rentAmount + updates.rentAmount;
+        await db.update(properties).set({ monthlyRevenue: newRev }).where(eq(properties.id, oldTenant.propertyId));
+      }
+    }
+
+    await db.update(tenants).set(updates).where(eq(tenants.id, tenantId));
+    
+    // If phone or email changed, update the user table record as well
+    if (updates.phone !== undefined || updates.email !== undefined) {
+      const userUpdates = {};
+      if (updates.phone !== undefined) userUpdates.phone = updates.phone;
+      if (updates.email !== undefined) userUpdates.email = updates.email;
+      await db.update(users).set(userUpdates).where(eq(users.id, oldTenant.userId));
+    }
+
+    const updatedTenant = { ...oldTenant, ...updates };
+    await logAuditAction(req, 'UPDATE_TENANT', oldTenant, { tenantId, name: updatedTenant.name });
+    
+    // Return decrypted version
+    const responseTenant = {
+      ...updatedTenant,
+      aadhaar: req.body.aadhaar !== undefined ? req.body.aadhaar : cryptoUtils.decrypt(oldTenant.aadhaarEncrypted),
+      pan: req.body.pan !== undefined ? req.body.pan : cryptoUtils.decrypt(oldTenant.panEncrypted),
+      permanentAddress: req.body.permanentAddress !== undefined ? req.body.permanentAddress : cryptoUtils.decrypt(oldTenant.permanentAddressEncrypted),
+      emergencyContact: req.body.emergencyContact !== undefined ? req.body.emergencyContact : cryptoUtils.decrypt(oldTenant.emergencyContactEncrypted),
+      drivingLicense: req.body.drivingLicense !== undefined ? req.body.drivingLicense : (oldTenant.drivingLicenseEncrypted ? cryptoUtils.decrypt(oldTenant.drivingLicenseEncrypted) : null)
+    };
+
+    res.json(responseTenant);
   } catch (error) {
     next(error);
   }
