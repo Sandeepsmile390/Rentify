@@ -1149,7 +1149,7 @@ export default function App() {
               {/* VIEW: DASHBOARD */}
               {activeView === 'dashboard' && !selectedTenant && (
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                  <div className="view-header">
                     <div>
                       <h1 style={{ fontSize: '2.2rem', marginBottom: '6px' }}>Dashboard Overview</h1>
                       <p style={{ color: 'var(--text-secondary)' }}>Live financials and occupancy statuses for your estates.</p>
@@ -1346,7 +1346,7 @@ export default function App() {
               {/* VIEW: PROPERTIES */}
               {activeView === 'properties' && !selectedProperty && (
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                  <div className="view-header">
                     <div>
                       <h1 style={{ fontSize: '2.2rem', marginBottom: '6px' }}>Property Management</h1>
                       <p style={{ color: 'var(--text-secondary)' }}>Overview of buildings, complexes, available rooms, and rental spaces.</p>
@@ -1641,7 +1641,7 @@ export default function App() {
               {/* VIEW: ANNOUNCEMENTS */}
               {activeView === 'announcements' && (
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                  <div className="view-header">
                     <div>
                       <h1 style={{ fontSize: '2.2rem', marginBottom: '6px' }}>Broadcast Board</h1>
                       <p style={{ color: 'var(--text-secondary)' }}>Send announcements, updates, and emergency notices to all active tenants.</p>
@@ -1745,7 +1745,7 @@ export default function App() {
               {/* VIEW: TENANTS */}
               {activeView === 'tenants' && !selectedTenant && (
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                  <div className="view-header">
                     <div>
                       <h1 style={{ fontSize: '2.2rem', marginBottom: '6px' }}>Tenant Management</h1>
                       <p style={{ color: 'var(--text-secondary)' }}>Manage profiles, verify Aadhaar/PAN upload statuses, and log move outs.</p>
@@ -2398,7 +2398,7 @@ export default function App() {
               {/* VIEW: BILLS & UTILITIES (GLOBAL LIST) */}
               {activeView === 'bills' && !selectedTenant && (
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                  <div className="view-header">
                     <div>
                       <h1 style={{ fontSize: '2.2rem', marginBottom: '6px' }}>Rent & Utility Bills</h1>
                       <p style={{ color: 'var(--text-secondary)' }}>Automate invoicing and override water/electricity unit rates manually.</p>
@@ -2463,7 +2463,7 @@ export default function App() {
               {/* VIEW: PAYMENTS LEDGER (GLOBAL LIST) */}
               {activeView === 'payments' && !selectedTenant && (
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                  <div className="view-header">
                     <div>
                       <h1 style={{ fontSize: '2.2rem', marginBottom: '6px' }}>Payments Ledger</h1>
                       <p style={{ color: 'var(--text-secondary)' }}>Full transactional listing of recorded UPI, Cash, and Bank Transfer receipts.</p>
@@ -2609,7 +2609,7 @@ export default function App() {
 
                 return (
                   <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                    <div className="view-header">
                       <div>
                         <h1 style={{ fontSize: '2.2rem', marginBottom: '6px' }}>Financial Reports & Analytics</h1>
                         <p style={{ color: 'var(--text-secondary)' }}>Detailed insights into collections, occupancy rates, utility consumption, and vacancy tracking.</p>
