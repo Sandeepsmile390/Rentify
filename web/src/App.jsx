@@ -855,7 +855,7 @@ export default function App() {
   const handleMarkAllNotificationsRead = async () => {
     try {
       await apiFetch(`${API_BASE}/notifications/mark-all-read`, {
-        method: 'PUT',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ role: 'owner' })
       });

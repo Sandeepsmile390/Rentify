@@ -998,6 +998,22 @@ h1, h2, h3, h4, h5, h6 {
   background: rgba(99, 102, 241, 0.05);
 }
 
+.notif-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.notif-msg {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.notif-time {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
 /* Smartphone Simulator Wrapper */
 .phone-simulator-container {
   display: flex;
