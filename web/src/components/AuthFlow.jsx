@@ -728,7 +728,7 @@ export default function AuthFlow({ onLoginSuccess, apiFetch, API_BASE }) {
                     onChange={(e) => setForgotInput(e.target.value)} 
                   />
                 </div>
-                <button type="submit" className="auth-action-btn" disabled={loading}>
+                <button type="submit" className={`auth-action-btn ${loginRole === 'owner' ? 'owner-btn' : 'tenant-btn'}`} disabled={loading}>
                   {loading ? 'Requesting...' : 'Request Recovery OTP'}
                 </button>
                 <button type="button" className="modal-dismiss-btn" onClick={() => { setShowForgotModal(false); setForgotStep(1); }}>
@@ -776,7 +776,7 @@ export default function AuthFlow({ onLoginSuccess, apiFetch, API_BASE }) {
                     onChange={(e) => setForgotConfirmPassword(e.target.value)} 
                   />
                 </div>
-                <button type="submit" className="auth-action-btn" disabled={loading}>
+                <button type="submit" className={`auth-action-btn ${loginRole === 'owner' ? 'owner-btn' : 'tenant-btn'}`} disabled={loading}>
                   {loading ? 'Verifying...' : 'Reset & Save Password'}
                 </button>
                 <button type="button" className="modal-dismiss-btn" onClick={() => { setForgotStep(1); setForgotRecoveryCode(''); }}>
@@ -879,7 +879,7 @@ export function ActiveSessions({ apiFetch, API_BASE, triggerToast, currentUserId
       ) : (
         <div className="sessions-grid">
           {sessionsList.map((session) => {
-            const isCurrent = session.tokenHash === null; // Local marker or compare
+            const isCurrent = session.isCurrent || session.tokenHash === null; // Local marker or compare
             return (
               <div key={session.id} className={`session-device-card ${isCurrent ? 'current-device' : ''}`}>
                 <div className="s-card-left">

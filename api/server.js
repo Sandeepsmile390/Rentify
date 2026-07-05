@@ -1954,7 +1954,22 @@ app.get('/api/auth/sessions', authenticateJWT, async (req, res, next) => {
     const activeSessions = await db.select().from(sessions).where(
       and(eq(sessions.userId, req.user.id), eq(sessions.isActive, true))
     ).orderBy(desc(sessions.lastActive));
-    res.json(activeSessions);
+
+    let currentRefreshToken = null;
+    if (req.cookies && req.cookies.refreshToken) {
+      currentRefreshToken = req.cookies.refreshToken;
+    } else if (req.headers['x-refresh-token']) {
+      currentRefreshToken = req.headers['x-refresh-token'];
+    }
+
+    const currentHash = currentRefreshToken ? currentRefreshToken.substring(0, 64) : null;
+
+    const sessionsWithCurrent = activeSessions.map(session => ({
+      ...session,
+      isCurrent: currentHash ? session.tokenHash === currentHash : false
+    }));
+
+    res.json(sessionsWithCurrent);
   } catch (error) {
     next(error);
   }
