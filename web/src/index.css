@@ -2805,3 +2805,48 @@ h1, h2, h3, h4, h5, h6 {
   }
 }
 
+/* Extra small mobile responsive adjustments for auth flow */
+@media (max-width: 480px) {
+  .auth-interaction-panel {
+    padding: 16px;
+  }
+  
+  .auth-interaction-panel .auth-card {
+    padding: 24px 16px;
+    border-radius: 16px;
+  }
+  
+  .role-hero-card {
+    padding: 16px;
+    gap: 12px;
+  }
+  
+  .rh-icon-box {
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+  }
+  
+  .rh-icon-box svg {
+    width: 22px;
+    height: 22px;
+  }
+  
+  .rh-info h3 {
+    font-size: 0.95rem;
+  }
+  
+  .rh-info p {
+    font-size: 0.78rem;
+    line-height: 1.35;
+  }
+  
+  .auth-header h1 {
+    font-size: 1.8rem !important;
+  }
+  
+  .auth-header h2 {
+    font-size: 1.5rem !important;
+  }
+}
+
