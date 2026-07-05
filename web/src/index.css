@@ -555,6 +555,14 @@ h1, h2, h3, h4, h5, h6 {
   animation: fadeIn var(--transition-normal);
 }
 
+.view-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+  gap: 16px;
+}
+
 /* Card layout structure */
 .card {
   extend: .glass-panel;
@@ -735,6 +743,9 @@ h1, h2, h3, h4, h5, h6 {
   padding: 32px;
   cursor: pointer;
   transition: all var(--transition-normal);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
 .property-card:hover {
@@ -743,18 +754,80 @@ h1, h2, h3, h4, h5, h6 {
   box-shadow: 0 16px 36px rgba(79, 70, 229, 0.15);
 }
 
+.property-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.property-header h3 {
+  font-size: 1.25rem;
+  color: var(--text-primary);
+  margin-top: 4px;
+}
+
+.property-type {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.occupancy-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.occupancy-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
 /* Progress bar filling styling */
 .progress-bar-container {
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 10px;
+  height: 8px;
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 4px;
   overflow: hidden;
   position: relative;
 }
 
 .progress-bar-fill {
   height: 100%;
-  border-radius: 10px;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-accent));
+  border-radius: 4px;
   transition: width var(--transition-slow) ease-out;
+}
+
+.property-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 16px;
+}
+
+.property-stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.property-stat-item label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.property-stat-item span {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
 /* Details and Tab systems */
@@ -1035,6 +1108,13 @@ h1, h2, h3, h4, h5, h6 {
 
   .quick-actions-grid {
     grid-template-columns: 1fr;
+  }
+
+  .view-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 20px;
   }
 }
 
