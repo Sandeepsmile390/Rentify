@@ -43,6 +43,7 @@
   /* Card Background & Shadows */
   --bg-card: #FFFFFF;
   --bg-sidebar: #FFFFFF;
+  --bg-input: rgba(255, 255, 255, 0.65);
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.03), 0 4px 6px -4px rgba(0, 0, 0, 0.03);
@@ -67,6 +68,7 @@
 
   --bg-card: #1e293b;
   --bg-sidebar: #0f172a;
+  --bg-input: rgba(0, 0, 0, 0.2);
   --shadow-premium: 0 20px 25px -5px rgba(0, 0, 0, 0.37), 0 8px 10px -6px rgba(0, 0, 0, 0.37);
 }
 
@@ -144,9 +146,9 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .dev-btn {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #ffffff;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
   padding: 8px 16px;
   border-radius: 10px;
   font-size: 0.85rem;
@@ -159,13 +161,19 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .dev-btn:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text-primary);
   transform: translateY(-1px);
+}
+
+[data-theme="dark"] .dev-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .dev-btn.active {
   background: var(--color-primary);
   border-color: var(--color-primary);
+  color: #ffffff;
   box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
 }
 
@@ -295,7 +303,7 @@ h1, h2, h3, h4, h5, h6 {
   padding: 14px 18px;
   border: 1.5px solid var(--border-color);
   border-radius: var(--radius-input);
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--bg-input);
   color: var(--text-primary);
   font-size: 0.95rem;
   transition: border-color var(--transition-fast), background var(--transition-fast);
@@ -305,7 +313,17 @@ h1, h2, h3, h4, h5, h6 {
 .input-field:focus {
   outline: none;
   border-color: var(--color-primary);
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--bg-input);
+}
+
+.input-field::placeholder {
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+select.input-field option {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
 }
 
 .btn-primary {
@@ -869,7 +887,7 @@ h1, h2, h3, h4, h5, h6 {
   margin-bottom: 32px;
 }
 
-.tab-button {
+.tab-btn {
   padding: 12px 24px;
   cursor: pointer;
   background: transparent;
@@ -881,11 +899,11 @@ h1, h2, h3, h4, h5, h6 {
   transition: all var(--transition-fast);
 }
 
-.tab-button:hover {
+.tab-btn:hover {
   color: var(--color-primary);
 }
 
-.tab-button-active {
+.tab-btn.active {
   color: var(--color-primary);
   border-bottom-color: var(--color-primary);
 }
