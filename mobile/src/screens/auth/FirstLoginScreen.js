@@ -7,7 +7,7 @@ import {
 import { authService } from '../../services/api';
 
 export default function FirstLoginScreen({ route, navigation }) {
-  const { tempPassword, onLoginComplete } = route.params;
+  const { tempPassword, onLoginComplete } = route.params || {};
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);

@@ -8,7 +8,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { authService } from '../../services/api';
 
-export default function TenantLoginScreen({ navigation, route }) {
+export default function TenantLoginScreen({ navigation, route, onLoginSuccess: propLoginSuccess }) {
+  const onLoginSuccess = propLoginSuccess || route?.params?.onLoginSuccess;
   const [tenantLoginId, setTenantLoginId] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
@@ -31,10 +32,12 @@ export default function TenantLoginScreen({ navigation, route }) {
           navigation.navigate('FirstLogin', { 
             tempPassword: password, 
             userId: res.user.id,
-            onLoginComplete: () => route.params?.onLoginSuccess('tenant')
+            onLoginComplete: () => onLoginSuccess && onLoginSuccess('tenant')
           });
         } else {
-          route.params?.onLoginSuccess('tenant');
+          if (onLoginSuccess) {
+            onLoginSuccess('tenant');
+          }
         }
       } else {
         Alert.alert('Authentication Failed', 'Invalid User ID or password.');

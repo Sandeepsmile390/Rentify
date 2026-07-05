@@ -3,8 +3,8 @@ import { StyleSheet, Text, View, TouchableOpacity, Animated, Alert } from 'react
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 
-export default function AppLockScreen({ navigation, route }) {
-  const { onUnlockSuccess } = route.params;
+export default function AppLockScreen({ navigation, route, onUnlockSuccess: propUnlockSuccess }) {
+  const onUnlockSuccess = propUnlockSuccess || route?.params?.onUnlockSuccess;
   const [pin, setPin] = useState('');
   const [hasBiometrics, setHasBiometrics] = useState(false);
   const shakeAnim = useRef(new Animated.Value(0)).current;

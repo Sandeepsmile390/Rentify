@@ -8,7 +8,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { authService } from '../../services/api';
 
-export default function OwnerLoginScreen({ navigation, route }) {
+export default function OwnerLoginScreen({ navigation, route, onLoginSuccess: propLoginSuccess }) {
+  const onLoginSuccess = propLoginSuccess || route?.params?.onLoginSuccess;
   const [loginInput, setLoginInput] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
@@ -51,7 +52,7 @@ export default function OwnerLoginScreen({ navigation, route }) {
         if (storedToken) {
           // Verify profile or simply log in
           Alert.alert('Unlocked', 'Welcome back to Rentify!', [
-            { text: 'Enter Dashboard', onPress: () => route.params?.onLoginSuccess('owner') }
+            { text: 'Enter Dashboard', onPress: () => onLoginSuccess && onLoginSuccess('owner') }
           ]);
         } else {
           Alert.alert('Authentication Failed', 'Please input your password once to renew session.');
@@ -97,20 +98,20 @@ export default function OwnerLoginScreen({ navigation, route }) {
                 onPress: async () => {
                   await AsyncStorage.setItem('biometrics_owner_enabled', 'true');
                   await AsyncStorage.setItem('biometrics_owner_setup_prompt', 'true');
-                  route.params?.onLoginSuccess('owner');
+                  if (onLoginSuccess) onLoginSuccess('owner');
                 } 
               },
               { 
                 text: 'Maybe Later', 
                 onPress: async () => {
                   await AsyncStorage.setItem('biometrics_owner_setup_prompt', 'true');
-                  route.params?.onLoginSuccess('owner');
+                  if (onLoginSuccess) onLoginSuccess('owner');
                 }
               }
             ]
           );
         } else {
-          route.params?.onLoginSuccess('owner');
+          if (onLoginSuccess) onLoginSuccess('owner');
         }
       } else {
         Alert.alert('Authentication Failed', 'Invalid email/phone or password.');

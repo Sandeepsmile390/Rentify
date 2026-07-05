@@ -3,8 +3,9 @@ import { StyleSheet, Text, View, Image, TouchableOpacity, Animated, Alert } from
 import * as LocalAuthentication from 'expo-local-authentication';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export default function BiometricScreen({ navigation, route }) {
-  const { onUnlockSuccess } = route.params;
+export default function BiometricScreen({ navigation, route, onUnlockSuccess: propUnlockSuccess, onLogout: propLogout }) {
+  const onUnlockSuccess = propUnlockSuccess || route?.params?.onUnlockSuccess;
+  const onLogout = propLogout || route?.params?.onLogout;
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -62,7 +63,9 @@ export default function BiometricScreen({ navigation, route }) {
     // Revoke login
     await AsyncStorage.removeItem('accessToken');
     await AsyncStorage.removeItem('refreshToken');
-    route.params?.onLogout();
+    if (onLogout) {
+      onLogout();
+    }
   };
 
   return (
