@@ -90,6 +90,9 @@ export default function PropertiesScreen({ route, navigation }) {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.headerRow}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.navigate('DashboardTab')}>
+          <Text style={styles.backBtnText}>← Dashboard</Text>
+        </TouchableOpacity>
         <Text style={styles.title}>Properties</Text>
         <TouchableOpacity style={styles.addButton} onPress={() => setShowAddProp(true)}>
           <Text style={styles.addButtonText}>+ New Property</Text>
@@ -243,15 +246,23 @@ const styles = StyleSheet.create({
   },
   headerRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 24,
     paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
   },
+  backBtn: {
+    marginRight: 12,
+  },
+  backBtnText: {
+    color: '#4F46E5',
+    fontWeight: '700',
+    fontSize: 13,
+  },
   title: {
-    fontSize: 22,
+    flex: 1,
+    fontSize: 20,
     fontWeight: '800',
     color: '#0F172A',
   },

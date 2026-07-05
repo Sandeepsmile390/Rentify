@@ -44,10 +44,11 @@ const tenantSchema = z.object({
 const propertySchema = z.object({
   name: z.string().min(2, 'Property name is too short').max(256),
   type: z.enum(['Residential', 'Commercial']),
-  totalRooms: z.number().int().min(1, 'Total units must be at least 1'),
+  totalRooms: z.coerce.number().int().min(0, 'Total units cannot be negative').optional().default(0),
   address: z.string().optional().nullable(),
+  location: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
-  floors: z.number().int().min(1).optional()
+  floors: z.coerce.number().int().min(1).optional().default(1)
 });
 
 const billSchema = z.object({

@@ -2757,6 +2757,11 @@ h1, h2, h3, h4, h5, h6 {
     flex-direction: column;
     overflow-x: hidden;
   }
+
+  .topbar-info-badges,
+  .topbar-actions .user-badge {
+    display: none !important;
+  }
   
   .content-body {
     padding: 16px;

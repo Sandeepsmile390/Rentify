@@ -468,16 +468,20 @@ app.post('/api/properties', authenticateJWT, authorizeRoles('owner'), async (req
     const valid = propertySchema.safeParse(req.body);
     if (!valid.success) return res.status(400).json({ errors: valid.error.format() });
 
-    const { name, type, totalRooms } = req.body;
+    const { name, type, totalRooms, address, location, description, floors } = req.body;
+    const finalTotalRooms = totalRooms !== undefined ? totalRooms : 0;
     const newProp = {
       id: 'prop-' + uuidv4(),
       name,
       type,
-      totalRooms,
+      totalRooms: finalTotalRooms,
       occupied: 0,
-      vacant: totalRooms,
+      vacant: finalTotalRooms,
       monthlyRevenue: 0,
-      ownerId: req.user.id
+      ownerId: req.user.id,
+      address: address || location || null,
+      description: description || null,
+      floors: floors !== undefined ? floors : 1
     };
 
     await db.insert(properties).values(newProp);
