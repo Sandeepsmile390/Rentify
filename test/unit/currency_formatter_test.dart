@@ -1,4 +1,4 @@
-import 'package:test/test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:rentify/core/utilities/currency_formatter.dart';
 
 void main() {
