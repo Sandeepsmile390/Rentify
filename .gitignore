@@ -1,0 +1,47 @@
+# Secrets — never commit these
+.env
+.env.local
+.env.*.local
+
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+*.g.dart
+*.freezed.dart
+
+# Android
+.gradle/
+android/.gradle/
+local.properties
+android/local.properties
+*.keystore
+*.jks
+*.p12
+android/key.properties
+android/app/google-services.json
+
+# iOS
+ios/Runner.xcworkspace
+ios/Runner/GoogleService-Info.plist
+*.ipa
+
+# IDE
+.vscode/settings.json
+.idea/
+*.iml
+
+# macOS
+.DS_Store
+
+# Node (if used for web tooling)
+node_modules/
+
+# Logs
+*.log
+
+# Generated
+coverage/
+.packages
+pubspec.lock

@@ -1,0 +1,528 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../../core/routing/routes.dart';
+import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_text_styles.dart';
+import '../../../core/utilities/currency_formatter.dart';
+import '../../../core/widgets/status_chip.dart';
+
+/// Figma frame 07 — Admin tenant directory (desktop + mobile adaptive)
+class TenantDirectoryScreen extends ConsumerStatefulWidget {
+  const TenantDirectoryScreen({super.key});
+
+  @override
+  ConsumerState<TenantDirectoryScreen> createState() =>
+      _TenantDirectoryScreenState();
+}
+
+class _TenantDirectoryScreenState
+    extends ConsumerState<TenantDirectoryScreen> {
+  final _searchController = TextEditingController();
+  String _searchQuery = '';
+  String _filterType = 'all'; // 'all' | 'room' | 'shop'
+  String _filterStatus = 'all'; // 'all' | 'dues' | 'clear'
+  bool _isLoading = true;
+  List<_TenantItem> _tenants = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    await Future.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+      _tenants = _TenantItem.placeholders();
+    });
+  }
+
+  List<_TenantItem> get _filtered {
+    return _tenants.where((t) {
+      final q = _searchQuery.toLowerCase();
+      final matchesSearch = q.isEmpty ||
+          t.name.toLowerCase().contains(q) ||
+          t.unit.toLowerCase().contains(q) ||
+          t.mobile.contains(q);
+      final matchesType = _filterType == 'all' ||
+          t.type.toLowerCase() == _filterType;
+      final matchesStatus = _filterStatus == 'all' ||
+          (_filterStatus == 'dues' && t.totalDuePaise > 0) ||
+          (_filterStatus == 'clear' && t.totalDuePaise == 0);
+      return matchesSearch && matchesType && matchesStatus;
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isWide = MediaQuery.sizeOf(context).width >= 900;
+
+    return Scaffold(
+      backgroundColor: AppColors.canvas,
+      appBar: AppBar(
+        title: Text('Tenants', style: AppTextStyles.h2),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: 'Refresh',
+            onPressed: () { setState(() => _isLoading = true); _load(); },
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: FilledButton.icon(
+              icon: const Icon(Icons.person_add_outlined, size: 18),
+              label: const Text('Add tenant'),
+              onPressed: () => context.push(Routes.createTenant),
+            ),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // ── Filter bar ──────────────────────────────────────
+          _FilterBar(
+            searchController: _searchController,
+            filterType: _filterType,
+            filterStatus: _filterStatus,
+            onSearch: (v) => setState(() => _searchQuery = v),
+            onTypeChanged: (v) => setState(() => _filterType = v),
+            onStatusChanged: (v) => setState(() => _filterStatus = v),
+          ),
+
+          // ── Summary row ─────────────────────────────────────
+          if (!_isLoading) _SummaryRow(tenants: _tenants),
+
+          const Divider(height: 1),
+
+          // ── List ─────────────────────────────────────────────
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _filtered.isEmpty
+                    ? _EmptyState(hasFilter: _searchQuery.isNotEmpty || _filterType != 'all' || _filterStatus != 'all')
+                    : isWide
+                        ? _TenantTable(tenants: _filtered)
+                        : _TenantList(tenants: _filtered),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Filter bar ────────────────────────────────────────────────────
+
+class _FilterBar extends StatelessWidget {
+  const _FilterBar({
+    required this.searchController,
+    required this.filterType,
+    required this.filterStatus,
+    required this.onSearch,
+    required this.onTypeChanged,
+    required this.onStatusChanged,
+  });
+  final TextEditingController searchController;
+  final String filterType;
+  final String filterStatus;
+  final ValueChanged<String> onSearch;
+  final ValueChanged<String> onTypeChanged;
+  final ValueChanged<String> onStatusChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: AppColors.surface,
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 3,
+            child: TextField(
+              controller: searchController,
+              onChanged: onSearch,
+              decoration: const InputDecoration(
+                hintText: 'Search by name, unit or mobile…',
+                prefixIcon: Icon(Icons.search_rounded, size: 20),
+                isDense: true,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          _FilterChip(
+            label: 'All',
+            selected: filterType == 'all',
+            onTap: () => onTypeChanged('all'),
+          ),
+          _FilterChip(
+            label: 'Rooms',
+            selected: filterType == 'room',
+            onTap: () => onTypeChanged('room'),
+          ),
+          _FilterChip(
+            label: 'Shops',
+            selected: filterType == 'shop',
+            onTap: () => onTypeChanged('shop'),
+          ),
+          const SizedBox(width: 4),
+          _FilterChip(
+            label: 'Dues',
+            selected: filterStatus == 'dues',
+            onTap: () => onStatusChanged(filterStatus == 'dues' ? 'all' : 'dues'),
+            selectedColor: AppColors.errorBg,
+            selectedTextColor: AppColors.error,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.selectedColor,
+    this.selectedTextColor,
+  });
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final Color? selectedColor;
+  final Color? selectedTextColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected
+                ? (selectedColor ?? AppColors.actionBg)
+                : AppColors.surfaceVariant,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: selected
+                  ? (selectedTextColor ?? AppColors.action)
+                  : AppColors.border,
+            ),
+          ),
+          child: Text(
+            label,
+            style: AppTextStyles.captionBold.copyWith(
+              color: selected
+                  ? (selectedTextColor ?? AppColors.action)
+                  : AppColors.inkMuted,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Summary row ───────────────────────────────────────────────────
+
+class _SummaryRow extends StatelessWidget {
+  const _SummaryRow({required this.tenants});
+  final List<_TenantItem> tenants;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = tenants.length;
+    final withDues = tenants.where((t) => t.totalDuePaise > 0).length;
+    final totalDue = tenants.fold<int>(0, (s, t) => s + t.totalDuePaise);
+
+    return Container(
+      color: AppColors.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Text('$total tenants', style: AppTextStyles.captionBold),
+          const SizedBox(width: 16),
+          if (withDues > 0) ...[
+            Container(width: 1, height: 12, color: AppColors.border),
+            const SizedBox(width: 16),
+            Text('$withDues with dues', style: AppTextStyles.captionBold.copyWith(color: AppColors.error)),
+            const SizedBox(width: 8),
+            Text('·', style: AppTextStyles.caption),
+            const SizedBox(width: 8),
+            Text(
+              'Total: ${CurrencyFormatter.fromPaise(totalDue)}',
+              style: AppTextStyles.captionBold.copyWith(color: AppColors.error),
+            ),
+          ] else ...[
+            Text('All clear ✓', style: AppTextStyles.captionBold.copyWith(color: AppColors.success)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ── Desktop table ─────────────────────────────────────────────────
+
+class _TenantTable extends StatelessWidget {
+  const _TenantTable({required this.tenants});
+  final List<_TenantItem> tenants;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          // Header
+          Container(
+            color: AppColors.surfaceVariant,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: const Row(
+              children: [
+                Expanded(flex: 3, child: _H('Tenant')),
+                Expanded(flex: 2, child: _H('Unit')),
+                Expanded(flex: 2, child: _H('Mobile')),
+                Expanded(flex: 2, child: _H('Rent due')),
+                Expanded(flex: 2, child: _H('Elec due')),
+                Expanded(flex: 2, child: _H('Total due')),
+                Expanded(flex: 1, child: _H('Status')),
+                SizedBox(width: 40),
+              ],
+            ),
+          ),
+          ...tenants.map((t) => _TableRow(tenant: t)),
+        ],
+      ),
+    );
+  }
+}
+
+class _H extends StatelessWidget {
+  const _H(this.text);
+  final String text;
+  @override
+  Widget build(BuildContext context) =>
+      Text(text, style: AppTextStyles.captionBold);
+}
+
+class _TableRow extends StatelessWidget {
+  const _TableRow({required this.tenant});
+  final _TenantItem tenant;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasDues = tenant.totalDuePaise > 0;
+    return InkWell(
+      onTap: () => context.push('${Routes.tenantProfile}/${tenant.tenancyId}'),
+      child: Container(
+        decoration: BoxDecoration(
+          border: const Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 3,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(tenant.name, style: AppTextStyles.bodyMedium),
+                Text(tenant.type, style: AppTextStyles.caption),
+              ]),
+            ),
+            Expanded(flex: 2, child: Text(tenant.unit, style: AppTextStyles.bodyRegular)),
+            Expanded(flex: 2, child: Text(tenant.mobile, style: AppTextStyles.bodyRegular)),
+            Expanded(
+              flex: 2,
+              child: Text(
+                CurrencyFormatter.fromPaise(tenant.rentDuePaise),
+                style: AppTextStyles.currencySmall.copyWith(
+                  color: tenant.rentDuePaise > 0 ? AppColors.amountDue : AppColors.inkMuted,
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 2,
+              child: Text(
+                CurrencyFormatter.fromPaise(tenant.elecDuePaise),
+                style: AppTextStyles.currencySmall.copyWith(
+                  color: tenant.elecDuePaise > 0 ? AppColors.warning : AppColors.inkMuted,
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 2,
+              child: Text(
+                CurrencyFormatter.fromPaise(tenant.totalDuePaise),
+                style: AppTextStyles.currencySmall.copyWith(
+                  color: hasDues ? AppColors.amountDue : AppColors.success,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 1,
+              child: StatusChip(
+                label: hasDues ? 'Dues' : 'Clear',
+                type: hasDues ? StatusChipType.error : StatusChipType.success,
+              ),
+            ),
+            const SizedBox(
+              width: 40,
+              child: Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.inkMuted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Mobile list ───────────────────────────────────────────────────
+
+class _TenantList extends StatelessWidget {
+  const _TenantList({required this.tenants});
+  final List<_TenantItem> tenants;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      itemCount: tenants.length,
+      separatorBuilder: (_, __) => const Divider(height: 1),
+      itemBuilder: (ctx, i) => _MobileTenantTile(tenant: tenants[i]),
+    );
+  }
+}
+
+class _MobileTenantTile extends StatelessWidget {
+  const _MobileTenantTile({required this.tenant});
+  final _TenantItem tenant;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasDues = tenant.totalDuePaise > 0;
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      leading: CircleAvatar(
+        radius: 20,
+        backgroundColor: hasDues ? AppColors.errorBg : AppColors.actionBg,
+        child: Text(
+          tenant.name.isNotEmpty ? tenant.name[0].toUpperCase() : '?',
+          style: TextStyle(
+            color: hasDues ? AppColors.error : AppColors.action,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      title: Text(tenant.name, style: AppTextStyles.bodyMedium),
+      subtitle: Text('${tenant.unit} · ${tenant.mobile}', style: AppTextStyles.caption),
+      trailing: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            CurrencyFormatter.fromPaise(tenant.totalDuePaise),
+            style: AppTextStyles.currencySmall.copyWith(
+              color: hasDues ? AppColors.amountDue : AppColors.success,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          StatusChip(
+            label: hasDues ? 'Dues' : 'Clear',
+            type: hasDues ? StatusChipType.error : StatusChipType.success,
+          ),
+        ],
+      ),
+      onTap: () => context.push('${Routes.tenantProfile}/${tenant.tenancyId}'),
+    );
+  }
+}
+
+// ── Empty state ───────────────────────────────────────────────────
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({required this.hasFilter});
+  final bool hasFilter;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            hasFilter ? Icons.search_off_rounded : Icons.people_outline_rounded,
+            size: 56,
+            color: AppColors.inkMuted,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            hasFilter ? 'No tenants match your filter' : 'No tenants yet',
+            style: AppTextStyles.h3,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            hasFilter
+                ? 'Try clearing the search or filter'
+                : 'Add your first tenant to get started',
+            style: AppTextStyles.bodyRegular,
+          ),
+          if (!hasFilter) ...[
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              icon: const Icon(Icons.person_add_outlined),
+              label: const Text('Add first tenant'),
+              onPressed: () => context.push(Routes.createTenant),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ── Placeholder data ──────────────────────────────────────────────
+
+class _TenantItem {
+  final String tenancyId;
+  final String name;
+  final String unit;
+  final String type;
+  final String mobile;
+  final int rentDuePaise;
+  final int elecDuePaise;
+
+  const _TenantItem({
+    required this.tenancyId,
+    required this.name,
+    required this.unit,
+    required this.type,
+    required this.mobile,
+    required this.rentDuePaise,
+    required this.elecDuePaise,
+  });
+
+  int get totalDuePaise => rentDuePaise + elecDuePaise;
+
+  static List<_TenantItem> placeholders() => [
+    const _TenantItem(tenancyId: 't1', name: 'Manoj Kumar', unit: 'Room 03', type: 'Room', mobile: '98765 43210', rentDuePaise: 0, elecDuePaise: 0),
+    const _TenantItem(tenancyId: 't2', name: 'Priya Sharma', unit: 'Room 07', type: 'Room', mobile: '91234 56789', rentDuePaise: 550000, elecDuePaise: 135000),
+    const _TenantItem(tenancyId: 't3', name: 'Ramesh Traders', unit: 'Shop A', type: 'Shop', mobile: '70000 12345', rentDuePaise: 800000, elecDuePaise: 0),
+    const _TenantItem(tenancyId: 't4', name: 'Sunita Devi', unit: 'Room 01', type: 'Room', mobile: '88888 11111', rentDuePaise: 0, elecDuePaise: 0),
+    const _TenantItem(tenancyId: 't5', name: 'Vikram Singh', unit: 'Room 12', type: 'Room', mobile: '77777 99999', rentDuePaise: 450000, elecDuePaise: 90000),
+    const _TenantItem(tenancyId: 't6', name: 'Deepa Electronics', unit: 'Shop B', type: 'Shop', mobile: '60001 23456', rentDuePaise: 120000, elecDuePaise: 325000),
+    const _TenantItem(tenancyId: 't7', name: 'Rahul Verma', unit: 'Room 05', type: 'Room', mobile: '99001 88002', rentDuePaise: 0, elecDuePaise: 0),
+    const _TenantItem(tenancyId: 't8', name: 'Kavitha Nair', unit: 'Room 09', type: 'Room', mobile: '95432 10987', rentDuePaise: 0, elecDuePaise: 0),
+  ];
+}
