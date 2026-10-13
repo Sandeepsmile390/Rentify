@@ -95,14 +95,32 @@
   </div>
 
   <script>
-    // Remove loading screen once Flutter has initialized
-    window.addEventListener('flutter-first-frame', function () {
+    function hideLoading() {
       const loading = document.getElementById('loading-screen');
       if (loading) {
         loading.style.opacity = '0';
-        setTimeout(() => loading.remove(), 300);
+        setTimeout(function() {
+          if (loading && loading.parentNode) {
+            loading.parentNode.removeChild(loading);
+          }
+        }, 300);
       }
-    });
+    }
+
+    // Dismiss as soon as Flutter DOM elements are mounted
+    try {
+      const observer = new MutationObserver(function(mutations, obs) {
+        if (document.querySelector('flutter-view') || document.querySelector('flt-glass-pane') || document.querySelector('canvas')) {
+          hideLoading();
+          obs.disconnect();
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    } catch (e) {}
+
+    window.addEventListener('flutter-first-frame', hideLoading);
+    // Safety fallback: ensure splash is never stuck for more than 2.5 seconds
+    setTimeout(hideLoading, 2500);
   </script>
 
   <script src="flutter_bootstrap.js" async></script>
