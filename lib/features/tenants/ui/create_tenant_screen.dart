@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/routing/routes.dart';
 import '../../../core/theme/app_colors.dart';
@@ -84,13 +85,34 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
     setState(() { _isSubmitting = true; _errorMessage = null; });
 
     try {
-      // TODO: Replace with actual Edge Function call via repository
-      await Future.delayed(const Duration(seconds: 1)); // simulate API call
+      final client = Supabase.instance.client;
+      final userId = client.auth.currentUser?.id;
+
+      final tenancyRes = await client.from('tenancies').insert({
+        'unit_id': _unitCtrl.text.trim(),
+        'tenant_type': _tenantType,
+        'tenant_name': _nameCtrl.text.trim(),
+        'mobile': _mobileCtrl.text.trim().isEmpty ? null : _mobileCtrl.text.trim(),
+        'start_date': _startDate.toIso8601String().substring(0, 10),
+        'notes': _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+        'is_active': true,
+        if (userId != null) 'created_by': userId,
+      }).select().single();
+
+      final rentVal = double.tryParse(_rentCtrl.text.trim()) ?? 0;
+      if (rentVal > 0) {
+        await client.from('rent_rates').insert({
+          'tenancy_id': tenancyRes['id'],
+          'amount_paise': (rentVal * 100).round(),
+          'effective_from': _startDate.toIso8601String().substring(0, 10),
+          if (userId != null) 'created_by': userId,
+        });
+      }
 
       if (!mounted) return;
       _showSuccessDialog();
     } catch (e) {
-      setState(() => _errorMessage = 'Failed to create tenant. Please try again.');
+      setState(() => _errorMessage = 'Failed to create tenant: ${e.toString()}');
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }

@@ -103,12 +103,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     }
   }
 
-  void _quickDemoLogin() {
-    _emailController.text = 'admin@rentify.app';
-    _passwordController.text = 'RentifyAdmin@2026';
-    ref.read(demoAuthProvider.notifier).loginAsAdmin(email: 'admin@rentify.app');
-    context.go(Routes.adminDashboard);
-  }
 
   String _friendlyAuthError(String raw) {
     final lower = raw.toLowerCase();
@@ -245,30 +239,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                             icon: Icons.login_rounded,
                           ),
 
-                          const SizedBox(height: 12),
-
-                          // Quick Demo Admin button
-                          OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              minimumSize: const Size.fromHeight(48),
-                              side: BorderSide(color: AppColors.action.withAlpha(120)),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
-                            icon: const Icon(Icons.flash_on_rounded, color: AppColors.action, size: 20),
-                            label: Text(
-                              'Demo Admin (1-Click Login)',
-                              style: AppTextStyles.bodyMedium.copyWith(
-                                color: AppColors.action,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            onPressed: _isLoading ? null : _quickDemoLogin,
-                          ),
-
-                          const SizedBox(height: 20),
-
+                          const SizedBox(height: 16),
                           // Biometric hint (shown only if possible)
                           const _BiometricHint(),
                         ],

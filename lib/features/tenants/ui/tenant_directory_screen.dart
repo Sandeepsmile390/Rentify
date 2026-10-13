@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/routing/routes.dart';
 import '../../../core/theme/app_colors.dart';
@@ -39,12 +40,36 @@ class _TenantDirectoryScreenState
   }
 
   Future<void> _load() async {
-    await Future.delayed(const Duration(milliseconds: 600));
-    if (!mounted) return;
-    setState(() {
-      _isLoading = false;
-      _tenants = _TenantItem.placeholders();
-    });
+    try {
+      final client = Supabase.instance.client;
+      final res = await client
+          .from('tenancies')
+          .select('id, unit_id, tenant_type, tenant_name, mobile, is_active')
+          .order('created_at', ascending: false);
+
+      final List<dynamic> rows = res as List<dynamic>;
+      final list = rows.map((t) => _TenantItem(
+            tenancyId: (t['id'] as String?) ?? '',
+            name: (t['tenant_name'] as String?) ?? 'Unnamed',
+            unit: (t['unit_id'] as String?) ?? '—',
+            type: (t['tenant_type'] as String?) == 'shop' ? 'Shop' : 'Room',
+            mobile: (t['mobile'] as String?) ?? '',
+            rentDuePaise: 0,
+            elecDuePaise: 0,
+          )).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _tenants = list;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _tenants = [];
+      });
+    }
   }
 
   List<_TenantItem> get _filtered {
