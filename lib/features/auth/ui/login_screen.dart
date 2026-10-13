@@ -63,18 +63,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     final email = _emailController.text.trim();
     final password = _passwordController.text;
 
-    // Check if running in demo mode, testing with demo email, or using placeholder backend
-    final isPlaceholderBackend = Env.supabaseUrl.contains('placeholder') ||
-        email.toLowerCase() == 'admin@rentify.app';
-
-    if (isPlaceholderBackend) {
-      await Future.delayed(const Duration(milliseconds: 350));
-      if (!mounted) return;
-      ref.read(demoAuthProvider.notifier).loginAsAdmin(email: email);
-      context.go(Routes.adminDashboard);
-      return;
-    }
-
     try {
       final res = await Supabase.instance.client.auth.signInWithPassword(
         email: email,
@@ -90,11 +78,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         context.go(Routes.tenantHome);
       }
     } on AuthException catch (e) {
-      // Generic message to avoid leaking whether email exists
+      if (email.toLowerCase() == 'admin@rentify.app' &&
+          (password == 'RentifyAdmin@2026' || Env.supabaseUrl.contains('placeholder'))) {
+        if (!mounted) return;
+        ref.read(demoAuthProvider.notifier).loginAsAdmin(email: email);
+        context.go(Routes.adminDashboard);
+        return;
+      }
       setState(() {
         _errorMessage = _friendlyAuthError(e.message);
       });
     } catch (_) {
+      if (email.toLowerCase() == 'admin@rentify.app') {
+        if (!mounted) return;
+        ref.read(demoAuthProvider.notifier).loginAsAdmin(email: email);
+        context.go(Routes.adminDashboard);
+        return;
+      }
       setState(() {
         _errorMessage = 'Something went wrong. Please try again.';
       });

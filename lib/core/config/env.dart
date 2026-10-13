@@ -9,12 +9,13 @@ class Env {
 
   static const String supabaseUrl = String.fromEnvironment(
     'SUPABASE_URL',
-    defaultValue: 'https://placeholder.supabase.co',
+    defaultValue: 'https://hxzuxainrstkobczijdu.supabase.co',
   );
 
   static const String supabaseAnonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
-    defaultValue: 'placeholder-anon-key',
+    defaultValue:
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh4enV4YWlucnN0a29iY3ppamR1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyODU3MjUsImV4cCI6MjA5Nzg2MTcyNX0.hibAy5snlSj7jBbwXoY6xFr6uI87hVpfg60nmb5ba7w',
   );
 
   /// App timezone for billing engine display (actual billing uses server tz).
