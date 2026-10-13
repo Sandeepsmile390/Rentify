@@ -1,11 +1,6 @@
 {
-  "version": 2,
-  "cleanUrls": false,
   "rewrites": [
-    {
-      "source": "/((?!assets|canvaskit|.*\\..*).*)",
-      "destination": "/index.html"
-    }
+    { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [
     {
@@ -14,15 +9,6 @@
         {
           "key": "Content-Type",
           "value": "application/wasm"
-        }
-      ]
-    },
-    {
-      "source": "/flutter_service_worker.js",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-cache, no-store, must-revalidate"
         }
       ]
     }
