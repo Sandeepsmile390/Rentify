@@ -27,11 +27,11 @@ class _NotificationCenterScreenState
   }
 
   Future<void> _load() async {
-    await Future.delayed(const Duration(milliseconds: 400));
+    await Future.delayed(const Duration(milliseconds: 200));
     if (!mounted) return;
     setState(() {
       _isLoading = false;
-      _items = _NotifItem.placeholders();
+      _items = [];
     });
   }
 
@@ -212,11 +212,4 @@ class _NotifItem {
     id: id, category: category, title: title, timeAgo: timeAgo,
     body: body, isRead: isRead ?? this.isRead,
   );
-
-  static List<_NotifItem> placeholders() => [
-    const _NotifItem(id: 'n1', category: 'payment', title: 'Payment recorded', body: '₹6,850 received from Priya Sharma (Room 07)', timeAgo: '2 min ago', isRead: false),
-    const _NotifItem(id: 'n2', category: 'charge', title: 'Monthly billing complete', body: 'October 2026 charges generated for 28 tenants', timeAgo: '1 hour ago', isRead: false),
-    const _NotifItem(id: 'n3', category: 'meter', title: 'Meter reading awaited', body: '3 tenants still need October meter readings', timeAgo: '3 hours ago', isRead: true),
-    const _NotifItem(id: 'n4', category: 'payment', title: 'Payment recorded', body: '₹5,500 received from Manoj Kumar (Room 03)', timeAgo: 'Yesterday', isRead: true),
-  ];
 }

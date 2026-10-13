@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../routing/routes.dart';
 import '../theme/app_colors.dart';
@@ -201,23 +202,28 @@ class _SideNavItem extends StatelessWidget {
   Future<void> _handleLogout(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dCtx) => AlertDialog(
         title: const Text('Sign out'),
         content: const Text('Are you sure you want to sign out?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.of(dCtx, rootNavigator: true).pop(false),
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.of(dCtx, rootNavigator: true).pop(true),
             child: const Text('Sign out', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
     );
     if (confirmed == true && context.mounted) {
-      context.go(Routes.login);
+      try {
+        await Supabase.instance.client.auth.signOut();
+      } catch (_) {}
+      if (context.mounted) {
+        context.go(Routes.login);
+      }
     }
   }
 }

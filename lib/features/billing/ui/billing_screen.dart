@@ -38,7 +38,7 @@ class _BillingScreenState extends ConsumerState<BillingScreen> {
   Future<void> _runBilling() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dCtx) => AlertDialog(
         title: Text('Run billing?', style: AppTextStyles.h2),
         content: Text(
           'This will generate rent and electricity charges for all active '
@@ -48,10 +48,10 @@ class _BillingScreenState extends ConsumerState<BillingScreen> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () => Navigator.of(dCtx, rootNavigator: true).pop(false),
               child: const Text('Cancel')),
           FilledButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () => Navigator.of(dCtx, rootNavigator: true).pop(true),
               child: const Text('Run billing')),
         ],
       ),

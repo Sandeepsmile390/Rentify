@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
@@ -32,12 +33,63 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
 
   Future<void> _load() async {
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 500));
-    if (!mounted) return;
-    setState(() {
-      _isLoading = false;
-      _data = _ReportData.placeholder(_selectedMonth);
-    });
+    try {
+      final client = Supabase.instance.client;
+      final tenantsRes = await client.from('tenancies').select('id, tenant_name, unit_id').eq('is_active', true);
+      final List<dynamic> tenants = tenantsRes as List<dynamic>;
+
+      final chargesRes = await client.from('charges').select('tenancy_id, amount_paise');
+      final paymentsRes = await client.from('payments').select('tenancy_id, amount_paise');
+      
+      final charges = (chargesRes as List<dynamic>);
+      final payments = (paymentsRes as List<dynamic>);
+
+      int totalCharged = 0;
+      for (final c in charges) {
+        totalCharged += ((c['amount_paise'] as num?) ?? 0).toInt();
+      }
+      int totalCollected = 0;
+      for (final p in payments) {
+        totalCollected += ((p['amount_paise'] as num?) ?? 0).toInt();
+      }
+
+      final rows = <_ReportRowData>[];
+      int paidCount = 0;
+      for (final t in tenants) {
+        final tId = t['id'];
+        final tCharges = charges.where((c) => c['tenancy_id'] == tId).fold<int>(0, (sum, c) => sum + ((c['amount_paise'] as num?) ?? 0).toInt());
+        final tPayments = payments.where((p) => p['tenancy_id'] == tId).fold<int>(0, (sum, p) => sum + ((p['amount_paise'] as num?) ?? 0).toInt());
+        if (tCharges > 0 && tPayments >= tCharges) paidCount++;
+        if (tCharges > 0 || tPayments > 0) {
+          rows.add(_ReportRowData(
+            name: (t['tenant_name'] as String?) ?? 'Tenant',
+            unit: (t['unit_id'] as String?) ?? '—',
+            chargedPaise: tCharges,
+            collectedPaise: tPayments,
+          ));
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _data = _ReportData(
+          month: _selectedMonth,
+          totalChargedPaise: totalCharged,
+          totalCollectedPaise: totalCollected,
+          outstandingPaise: (totalCharged - totalCollected).clamp(0, double.infinity).toInt(),
+          paidCount: paidCount,
+          totalTenants: tenants.length,
+          rows: rows,
+        );
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _data = _ReportData.empty(_selectedMonth);
+      });
+    }
   }
 
   @override
@@ -123,7 +175,23 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                       // Per-tenant table
                       Text('Per-tenant breakdown', style: AppTextStyles.h3),
                       const SizedBox(height: 12),
-                      ..._data!.rows.map((r) => _ReportRow(row: r)),
+                      if (_data!.rows.isEmpty)
+                        Center(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 32),
+                            child: Column(
+                              children: [
+                                const Icon(Icons.analytics_outlined, size: 48, color: AppColors.inkMuted),
+                                const SizedBox(height: 12),
+                                Text('No billing records for this month', style: AppTextStyles.bodyMedium),
+                                const SizedBox(height: 4),
+                                Text('Generate bills or record payments to see reports here.', style: AppTextStyles.caption),
+                              ],
+                            ),
+                          ),
+                        )
+                      else
+                        ..._data!.rows.map((r) => _ReportRow(row: r)),
                     ],
                   ),
           ),
@@ -315,16 +383,14 @@ class _ReportData {
     required this.paidCount, required this.totalTenants, required this.rows,
   });
 
-  factory _ReportData.placeholder(String month) => _ReportData(
+  factory _ReportData.empty(String month) => _ReportData(
     month: month,
-    totalChargedPaise: 18500000, totalCollectedPaise: 13200000,
-    outstandingPaise: 5300000, paidCount: 22, totalTenants: 28,
-    rows: [
-      _ReportRowData(name: 'Manoj Kumar', unit: 'Room 03', chargedPaise: 550000, collectedPaise: 550000),
-      _ReportRowData(name: 'Priya Sharma', unit: 'Room 07', chargedPaise: 685000, collectedPaise: 0),
-      _ReportRowData(name: 'Ramesh Traders', unit: 'Shop A', chargedPaise: 800000, collectedPaise: 800000),
-      _ReportRowData(name: 'Vikram Singh', unit: 'Room 12', chargedPaise: 540000, collectedPaise: 0),
-    ],
+    totalChargedPaise: 0,
+    totalCollectedPaise: 0,
+    outstandingPaise: 0,
+    paidCount: 0,
+    totalTenants: 0,
+    rows: const [],
   );
 }
 

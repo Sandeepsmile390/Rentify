@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
@@ -26,11 +27,49 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
   bool _isSubmitting = false;
   String? _errorMessage;
 
-  // Mock data — replace with Supabase query
-  final double _previousReading = 1450.5;
+  double _previousReading = 0.0;
   final int _ratePaise = 900; // ₹9/unit
-  String _billingMonth = 'October 2026';
-  String _billingMonthDate = '2026-10-01';
+  String _tenantName = 'Tenant';
+  String _unitId = '';
+  String get _billingMonth => 'October 2026';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPreviousReading();
+  }
+
+  Future<void> _loadPreviousReading() async {
+    try {
+      final client = Supabase.instance.client;
+      final tenancy = await client
+          .from('tenancies')
+          .select('tenant_name, unit_id')
+          .eq('id', widget.tenancyId)
+          .maybeSingle();
+
+      if (tenancy != null && mounted) {
+        setState(() {
+          _tenantName = (tenancy['tenant_name'] as String?) ?? 'Tenant';
+          _unitId = (tenancy['unit_id'] as String?) ?? '';
+        });
+      }
+
+      final res = await client
+          .from('meter_readings')
+          .select('current_reading')
+          .eq('tenancy_id', widget.tenancyId)
+          .order('billing_month', ascending: false)
+          .limit(1)
+          .maybeSingle();
+
+      if (res != null && mounted) {
+        setState(() {
+          _previousReading = (res['current_reading'] as num?)?.toDouble() ?? 0.0;
+        });
+      }
+    } catch (_) {}
+  }
 
   @override
   void dispose() {
@@ -52,12 +91,26 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
     setState(() { _isSubmitting = true; _errorMessage = null; });
 
     try {
-      // TODO: call post-meter-reading Edge Function via repository
-      await Future.delayed(const Duration(milliseconds: 800));
+      final client = Supabase.instance.client;
+      final userId = client.auth.currentUser?.id;
+      final now = DateTime.now();
+      final billingMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}-01';
+
+      await client.from('meter_readings').insert({
+        'tenancy_id': widget.tenancyId,
+        'billing_month': billingMonth,
+        'previous_reading': _previousReading,
+        'current_reading': _currentReading,
+        'rate_paise': _ratePaise,
+        'amount_paise': _chargeAmountPaise,
+        'notes': _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+        if (userId != null) 'created_by': userId,
+      });
+
       if (!mounted) return;
       _showSuccessSheet();
-    } catch (_) {
-      setState(() => _errorMessage = 'Failed to save reading. Please try again.');
+    } catch (e) {
+      setState(() => _errorMessage = 'Failed to save reading: $e');
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -67,7 +120,7 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
     showModalBottomSheet(
       context: context,
       isDismissible: false,
-      builder: (_) => SafeArea(
+      builder: (sheetCtx) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
@@ -90,8 +143,8 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
               AppButton(
                 label: 'Done',
                 onPressed: () {
-                  Navigator.pop(context);
-                  Navigator.pop(context);
+                  Navigator.of(sheetCtx, rootNavigator: true).pop();
+                  if (mounted) Navigator.of(context).pop();
                 },
               ),
             ],
@@ -137,7 +190,7 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
                   const SizedBox(width: 14),
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text('Priya Sharma · Room 07', style: AppTextStyles.h3.copyWith(color: Colors.white)),
+                      Text('$_tenantName${_unitId.isNotEmpty ? ' · $_unitId' : ''}', style: AppTextStyles.h3.copyWith(color: Colors.white)),
                       Text(_billingMonth, style: AppTextStyles.caption.copyWith(color: Colors.white70)),
                     ]),
                   ),

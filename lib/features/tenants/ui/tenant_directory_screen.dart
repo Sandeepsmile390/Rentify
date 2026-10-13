@@ -539,15 +539,4 @@ class _TenantItem {
   });
 
   int get totalDuePaise => rentDuePaise + elecDuePaise;
-
-  static List<_TenantItem> placeholders() => [
-    const _TenantItem(tenancyId: 't1', name: 'Manoj Kumar', unit: 'Room 03', type: 'Room', mobile: '98765 43210', rentDuePaise: 0, elecDuePaise: 0),
-    const _TenantItem(tenancyId: 't2', name: 'Priya Sharma', unit: 'Room 07', type: 'Room', mobile: '91234 56789', rentDuePaise: 550000, elecDuePaise: 135000),
-    const _TenantItem(tenancyId: 't3', name: 'Ramesh Traders', unit: 'Shop A', type: 'Shop', mobile: '70000 12345', rentDuePaise: 800000, elecDuePaise: 0),
-    const _TenantItem(tenancyId: 't4', name: 'Sunita Devi', unit: 'Room 01', type: 'Room', mobile: '88888 11111', rentDuePaise: 0, elecDuePaise: 0),
-    const _TenantItem(tenancyId: 't5', name: 'Vikram Singh', unit: 'Room 12', type: 'Room', mobile: '77777 99999', rentDuePaise: 450000, elecDuePaise: 90000),
-    const _TenantItem(tenancyId: 't6', name: 'Deepa Electronics', unit: 'Shop B', type: 'Shop', mobile: '60001 23456', rentDuePaise: 120000, elecDuePaise: 325000),
-    const _TenantItem(tenancyId: 't7', name: 'Rahul Verma', unit: 'Room 05', type: 'Room', mobile: '99001 88002', rentDuePaise: 0, elecDuePaise: 0),
-    const _TenantItem(tenancyId: 't8', name: 'Kavitha Nair', unit: 'Room 09', type: 'Room', mobile: '95432 10987', rentDuePaise: 0, elecDuePaise: 0),
-  ];
 }

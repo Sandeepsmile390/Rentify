@@ -48,7 +48,7 @@ class _AdvanceManagementScreenState
         ),
         child: _AddTransactionSheet(
           onSubmit: (type, amountPaise, reason) {
-            Navigator.pop(ctx);
+            Navigator.of(ctx, rootNavigator: true).pop();
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
@@ -32,22 +33,42 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
   DateTime _paymentDate = DateTime.now();
   bool _showAllocations = true;
 
-  // Mock pending charges — replace with real Supabase data
-  final List<_PendingCharge> _charges = [
-    _PendingCharge(id: 'c1', label: 'Rent', month: 'October 2026', amountPaise: 550000, outstandingPaise: 550000, type: 'rent'),
-    _PendingCharge(id: 'c2', label: 'Electricity', month: 'October 2026', amountPaise: 135000, outstandingPaise: 135000, type: 'electricity'),
-  ];
-
+  List<_PendingCharge> _charges = [];
   final Map<String, int> _allocations = {}; // chargeId → paise to allocate
 
   @override
   void initState() {
     super.initState();
     _dateCtrl.text = _formatDate(_paymentDate);
-    // Default: allocate everything
-    for (final c in _charges) {
-      _allocations[c.id] = c.outstandingPaise;
-    }
+    _loadCharges();
+  }
+
+  Future<void> _loadCharges() async {
+    try {
+      final client = Supabase.instance.client;
+      final res = await client
+          .from('charges')
+          .select('id, charge_type, amount_paise, billing_period_start')
+          .eq('tenancy_id', widget.tenancyId);
+
+      if (!mounted) return;
+      final rows = res as List<dynamic>;
+      final list = rows.map((r) => _PendingCharge(
+            id: r['id'] as String,
+            label: (r['charge_type'] as String?) == 'electricity' ? 'Electricity' : 'Rent',
+            month: (r['billing_period_start'] as String?) ?? 'Current',
+            amountPaise: (r['amount_paise'] as num?)?.toInt() ?? 0,
+            outstandingPaise: (r['amount_paise'] as num?)?.toInt() ?? 0,
+            type: (r['charge_type'] as String?) ?? 'rent',
+          )).toList();
+
+      setState(() {
+        _charges = list;
+        for (final c in list) {
+          _allocations[c.id] = c.outstandingPaise;
+        }
+      });
+    } catch (_) {}
   }
 
   @override
@@ -98,13 +119,22 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
     setState(() { _isSubmitting = true; _errorMessage = null; });
 
     try {
-      // TODO: call record-payment Edge Function via repository
-      await Future.delayed(const Duration(seconds: 1));
-      if (!mounted) return;
+      final client = Supabase.instance.client;
+      final userId = client.auth.currentUser?.id;
+      await client.from('payments').insert({
+        'tenancy_id': widget.tenancyId,
+        'amount_paise': _paymentAmountPaise,
+        'payment_method': _method,
+        'payment_date': _paymentDate.toIso8601String().substring(0, 10),
+        'reference': _referenceCtrl.text.trim().isEmpty ? null : _referenceCtrl.text.trim(),
+        'notes': _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+        if (userId != null) 'created_by': userId,
+      });
 
+      if (!mounted) return;
       _showSuccessSheet();
-    } catch (_) {
-      setState(() => _errorMessage = 'Failed to record payment. Please try again.');
+    } catch (e) {
+      setState(() => _errorMessage = 'Failed to record payment: $e');
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -114,7 +144,7 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
     showModalBottomSheet(
       context: context,
       isDismissible: false,
-      builder: (_) => SafeArea(
+      builder: (sheetCtx) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
@@ -140,8 +170,8 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
                     label: 'Done',
                     type: AppButtonType.primary,
                     onPressed: () {
-                      Navigator.pop(context);
-                      Navigator.pop(context);
+                      Navigator.of(sheetCtx, rootNavigator: true).pop();
+                      if (mounted) Navigator.of(context).pop();
                     },
                   ),
                 ),

@@ -178,7 +178,7 @@ class _ProfileAppBar extends StatelessWidget {
   void _showActionsSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      builder: (_) => SafeArea(
+      builder: (sheetCtx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -186,7 +186,7 @@ class _ProfileAppBar extends StatelessWidget {
               leading: const Icon(Icons.swap_vert_rounded),
               title: const Text('Advance / Deposit'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.of(sheetCtx, rootNavigator: true).pop();
                 context.pushNamed('advances', pathParameters: {'tenancyId': tenancyId});
               },
             ),
@@ -194,19 +194,19 @@ class _ProfileAppBar extends StatelessWidget {
               leading: const Icon(Icons.history_rounded),
               title: const Text('Audit trail'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.of(sheetCtx, rootNavigator: true).pop();
                 context.pushNamed('audit-trail', pathParameters: {'tenancyId': tenancyId});
               },
             ),
             ListTile(
               leading: const Icon(Icons.share_rounded),
               title: const Text('Send WhatsApp dues summary'),
-              onTap: () => Navigator.pop(context),
+              onTap: () => Navigator.of(sheetCtx, rootNavigator: true).pop(),
             ),
             ListTile(
               leading: const Icon(Icons.folder_outlined),
               title: const Text('Documents'),
-              onTap: () => Navigator.pop(context),
+              onTap: () => Navigator.of(sheetCtx, rootNavigator: true).pop(),
             ),
           ],
         ),

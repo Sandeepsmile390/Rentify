@@ -122,7 +122,7 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         icon: Container(
           width: 48,
           height: 48,
@@ -140,25 +140,33 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.pop(context);
-              context.go(Routes.tenantDirectory);
+              Navigator.of(dialogCtx, rootNavigator: true).pop();
+              if (mounted) {
+                context.go(Routes.tenantDirectory);
+              }
             },
             child: const Text('View tenants'),
           ),
           FilledButton(
             onPressed: () {
-              Navigator.pop(context);
-              // Reset form for next tenant
-              _formKey.currentState?.reset();
-              _nameCtrl.clear(); _mobileCtrl.clear(); _emailCtrl.clear();
-              _unitCtrl.clear(); _rentCtrl.clear(); _notesCtrl.clear();
-              setState(() {
-                _startDate = DateTime.now();
-                _startDateCtrl.text = _formatDate(_startDate);
-                _tenantType = 'room';
-                _elecMode = 'meter';
-                _createLogin = false;
-              });
+              Navigator.of(dialogCtx, rootNavigator: true).pop();
+              if (mounted) {
+                // Reset form for next tenant
+                _formKey.currentState?.reset();
+                _nameCtrl.clear();
+                _mobileCtrl.clear();
+                _emailCtrl.clear();
+                _unitCtrl.clear();
+                _rentCtrl.clear();
+                _notesCtrl.clear();
+                setState(() {
+                  _startDate = DateTime.now();
+                  _startDateCtrl.text = _formatDate(_startDate);
+                  _tenantType = 'room';
+                  _elecMode = 'meter';
+                  _createLogin = false;
+                });
+              }
             },
             child: const Text('Add another'),
           ),
