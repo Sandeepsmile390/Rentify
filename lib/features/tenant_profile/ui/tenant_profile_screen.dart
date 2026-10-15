@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -944,9 +945,9 @@ Future<void> _confirmDeleteTenant(BuildContext context, String tenancyId, String
         ],
       ),
       content: Text(
-        'Are you sure you want to permanently delete $tenantName?\n\n'
-        'This will remove all associated charges, meter readings, payments, and advance records.\n\n'
-        'This action cannot be undone.',
+        'Are you sure you want to remove or deactivate $tenantName?\n\n'
+        '• If financial history exists (charges, payments, or advances), the tenancy will be archived to preserve ledger and accounting integrity.\n'
+        '• If no financial records exist, it will be removed cleanly.',
       ),
       actions: [
         TextButton(
@@ -956,7 +957,7 @@ Future<void> _confirmDeleteTenant(BuildContext context, String tenancyId, String
         FilledButton(
           style: FilledButton.styleFrom(backgroundColor: AppColors.error),
           onPressed: () => Navigator.pop(ctx, true),
-          child: const Text('Delete Permanently'),
+          child: const Text('Confirm'),
         ),
       ],
     ),
@@ -974,7 +975,7 @@ Future<void> _confirmDeleteTenant(BuildContext context, String tenancyId, String
             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
           ),
           const SizedBox(width: 12),
-          Text('Deleting $tenantName…'),
+          Text('Processing $tenantName…'),
         ],
       ),
       duration: const Duration(seconds: 15),
@@ -982,12 +983,15 @@ Future<void> _confirmDeleteTenant(BuildContext context, String tenancyId, String
   );
 
   try {
-    await TenancyService.deleteTenancy(tenancyId);
+    final outcome = await TenancyService.deleteOrDeactivateTenancy(tenancyId);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    final msg = outcome == TenancyActionOutcome.deactivated
+        ? 'Tenant $tenantName was safely archived (financial records preserved).'
+        : 'Tenant $tenantName deleted cleanly.';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Tenant $tenantName deleted successfully.'),
+        content: Text(msg),
         backgroundColor: AppColors.success,
       ),
     );
@@ -997,7 +1001,7 @@ Future<void> _confirmDeleteTenant(BuildContext context, String tenancyId, String
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Failed to delete tenant: $e'),
+        content: Text('Failed to process tenant: $e'),
         backgroundColor: AppColors.error,
       ),
     );
@@ -1031,9 +1035,13 @@ Future<void> _sendWhatsAppDuesSummary(BuildContext context, _ProfileData data) a
   );
 
   try {
-    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!launched) {
-      await launchUrl(uri, mode: LaunchMode.platformDefault);
+    if (kIsWeb) {
+      await launchUrl(uri, webOnlyWindowName: '_blank');
+    } else {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched) {
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+      }
     }
   } catch (e) {
     if (context.mounted) {
@@ -1059,7 +1067,7 @@ Future<void> _shareTenantLoginDetails(BuildContext context, _ProfileData data) a
   message.writeln('🔐 *How to Login:*');
   message.writeln('1. Open the portal link or download the Rentify App');
   message.writeln('2. Enter your registered mobile: *${data.mobile}*');
-  message.writeln('3. Access your private tenant dashboard instantly!');
+  message.writeln('3. Access your private tenant dashboard securely!');
   message.writeln('');
   message.writeln('Thank you!');
 
@@ -1074,9 +1082,13 @@ Future<void> _shareTenantLoginDetails(BuildContext context, _ProfileData data) a
   );
 
   try {
-    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!launched) {
-      await launchUrl(uri, mode: LaunchMode.platformDefault);
+    if (kIsWeb) {
+      await launchUrl(uri, webOnlyWindowName: '_blank');
+    } else {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched) {
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+      }
     }
   } catch (e) {
     if (context.mounted) {

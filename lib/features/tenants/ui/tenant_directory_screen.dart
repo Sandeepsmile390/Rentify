@@ -714,9 +714,9 @@ Future<void> _confirmDeleteTenantDirectory(
         ],
       ),
       content: Text(
-        'Are you sure you want to permanently delete $tenantName?\n\n'
-        'This will remove all associated charges, meter readings, payments, and advance records.\n\n'
-        'This action cannot be undone.',
+        'Are you sure you want to remove or deactivate $tenantName?\n\n'
+        '• If financial history exists (charges, payments, or advances), the tenancy will be archived to preserve ledger and accounting integrity.\n'
+        '• If no financial records exist, it will be removed cleanly.',
       ),
       actions: [
         TextButton(
@@ -726,7 +726,7 @@ Future<void> _confirmDeleteTenantDirectory(
         FilledButton(
           style: FilledButton.styleFrom(backgroundColor: AppColors.error),
           onPressed: () => Navigator.pop(ctx, true),
-          child: const Text('Delete Permanently'),
+          child: const Text('Confirm'),
         ),
       ],
     ),
@@ -744,7 +744,7 @@ Future<void> _confirmDeleteTenantDirectory(
             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
           ),
           const SizedBox(width: 12),
-          Text('Deleting $tenantName…'),
+          Text('Processing $tenantName…'),
         ],
       ),
       duration: const Duration(seconds: 15),
@@ -752,12 +752,15 @@ Future<void> _confirmDeleteTenantDirectory(
   );
 
   try {
-    await TenancyService.deleteTenancy(tenancyId);
+    final outcome = await TenancyService.deleteOrDeactivateTenancy(tenancyId);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    final msg = outcome == TenancyActionOutcome.deactivated
+        ? 'Tenant $tenantName was safely archived (financial records preserved).'
+        : 'Tenant $tenantName deleted cleanly.';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Tenant $tenantName deleted successfully.'),
+        content: Text(msg),
         backgroundColor: AppColors.success,
       ),
     );
@@ -767,7 +770,7 @@ Future<void> _confirmDeleteTenantDirectory(
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Failed to delete tenant: $e'),
+        content: Text('Failed to process tenant: $e'),
         backgroundColor: AppColors.error,
       ),
     );

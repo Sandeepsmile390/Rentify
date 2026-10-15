@@ -30,13 +30,27 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     initialLocation: Routes.login,
     debugLogDiagnostics: false,
     redirect: (context, state) {
-      final isLoginRoute = state.matchedLocation == Routes.login ||
-          state.matchedLocation == Routes.forgotPassword;
+      final location = state.matchedLocation;
+      final isLoginRoute = location == Routes.login ||
+          location == Routes.forgotPassword;
 
-      if (!isLoggedIn && !isLoginRoute) return Routes.login;
-      if (isLoggedIn && isLoginRoute) {
+      if (!isLoggedIn) {
+        return isLoginRoute ? null : Routes.login;
+      }
+
+      if (isLoginRoute) {
         return role == 'admin' ? Routes.adminDashboard : Routes.tenantHome;
       }
+
+      // Strict role-based route guards
+      if (role == 'tenant' && location.startsWith('/admin')) {
+        return Routes.tenantHome;
+      }
+
+      if (role == 'admin' && location.startsWith('/tenant')) {
+        return Routes.adminDashboard;
+      }
+
       return null;
     },
     routes: [

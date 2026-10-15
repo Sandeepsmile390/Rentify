@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -64,68 +65,76 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     final password = _passwordController.text;
     final cleanDigits = identifier.replaceAll(RegExp(r'\D'), '');
 
-    // 1. Mobile Number Login for Tenants
+    String loginEmail = identifier;
+
+    // 1. Mobile Number Login for Tenants: Lookup account email securely
     if (cleanDigits.length >= 10 && !identifier.contains('@')) {
       try {
         final client = Supabase.instance.client;
-        final match = await client
-            .from('tenancies')
-            .select('id, tenant_name, mobile, unit_id')
-            .ilike('mobile', '%$cleanDigits%')
-            .eq('is_active', true)
-            .maybeSingle();
+        final res = await client.rpc(
+          'get_tenant_login_email',
+          params: {'p_mobile': cleanDigits},
+        );
 
-        if (match != null) {
+        if (res != null && res.toString().isNotEmpty) {
+          loginEmail = res.toString().trim();
+        } else {
+          setState(() {
+            _errorMessage = 'No active tenancy account found with mobile number $cleanDigits. Please contact your landlord.';
+          });
+          return;
+        }
+      } catch (e) {
+        // Safe offline dev fallback only when no live backend exists
+        if (kDebugMode && Env.supabaseUrl.contains('placeholder')) {
           ref.read(demoAuthProvider.notifier).loginAsTenant(
             email: '$cleanDigits@tenant.rentify.app',
           );
           if (mounted) context.go(Routes.tenantHome);
           return;
-        } else {
-          setState(() {
-            _errorMessage = 'No active tenancy found with mobile number $cleanDigits. Please check with your landlord.';
-          });
-          return;
         }
-      } catch (e) {
-        ref.read(demoAuthProvider.notifier).loginAsTenant(
-          email: '$cleanDigits@tenant.rentify.app',
-        );
-        if (mounted) context.go(Routes.tenantHome);
+        setState(() {
+          _errorMessage = 'Unable to resolve mobile account. Please sign in with your email or check connection.';
+        });
         return;
       }
     }
 
-    final email = identifier;
-
     try {
-      if (email.toLowerCase() == 'admin@rentify.app' &&
-          (password == 'RentifyAdmin@2026' || Env.supabaseUrl.contains('placeholder'))) {
-        ref.read(demoAuthProvider.notifier).loginAsAdmin(email: email);
-        if (mounted) context.go(Routes.adminDashboard);
-        return;
-      }
-      if (email.toLowerCase() == 'tenant@rentify.app') {
-        ref.read(demoAuthProvider.notifier).loginAsTenant(email: email);
-        if (mounted) context.go(Routes.tenantHome);
+      // Dev placeholder mode only
+      if (kDebugMode && Env.supabaseUrl.contains('placeholder')) {
+        if (loginEmail.toLowerCase().contains('admin')) {
+          ref.read(demoAuthProvider.notifier).loginAsAdmin(email: loginEmail);
+          if (mounted) context.go(Routes.adminDashboard);
+        } else {
+          ref.read(demoAuthProvider.notifier).loginAsTenant(email: loginEmail);
+          if (mounted) context.go(Routes.tenantHome);
+        }
         return;
       }
 
+      // Live Supabase Authentication
       final res = await Supabase.instance.client.auth.signInWithPassword(
-        email: email,
+        email: loginEmail,
         password: password,
       );
 
       if (!mounted) return;
 
-      String role = (res.user?.userMetadata?['role'] as String?) ?? '';
-      if (role.isEmpty && res.user?.id != null) {
-        final profile = await Supabase.instance.client
-            .from('profiles')
-            .select('role')
-            .eq('id', res.user!.id)
-            .maybeSingle();
-        role = (profile?['role'] as String?) ?? 'tenant';
+      // Authoritative role check from server profile
+      String role = '';
+      if (res.user?.id != null) {
+        try {
+          final profile = await Supabase.instance.client
+              .from('profiles')
+              .select('role')
+              .eq('id', res.user!.id)
+              .maybeSingle();
+          role = (profile?['role'] as String?) ?? '';
+        } catch (_) {}
+      }
+      if (role.isEmpty) {
+        role = (res.user?.userMetadata?['role'] as String?) ?? 'tenant';
       }
 
       if (!mounted) return;
@@ -135,35 +144,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         context.go(Routes.tenantHome);
       }
     } on AuthException catch (e) {
-      if (email.toLowerCase() == 'admin@rentify.app') {
-        if (!mounted) return;
-        ref.read(demoAuthProvider.notifier).loginAsAdmin(email: email);
-        context.go(Routes.adminDashboard);
-        return;
-      } else if (email.toLowerCase() == 'tenant@rentify.app') {
-        if (!mounted) return;
-        ref.read(demoAuthProvider.notifier).loginAsTenant(email: email);
-        context.go(Routes.tenantHome);
-        return;
+      if (mounted) {
+        setState(() {
+          _errorMessage = _friendlyAuthError(e.message);
+        });
       }
-      setState(() {
-        _errorMessage = _friendlyAuthError(e.message);
-      });
     } catch (_) {
-      if (email.toLowerCase() == 'admin@rentify.app') {
-        if (!mounted) return;
-        ref.read(demoAuthProvider.notifier).loginAsAdmin(email: email);
-        context.go(Routes.adminDashboard);
-        return;
-      } else if (email.toLowerCase() == 'tenant@rentify.app') {
-        if (!mounted) return;
-        ref.read(demoAuthProvider.notifier).loginAsTenant(email: email);
-        context.go(Routes.tenantHome);
-        return;
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Sign in failed. Please check your credentials and internet connection.';
+        });
       }
-      setState(() {
-        _errorMessage = 'Something went wrong. Please try again.';
-      });
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -261,7 +252,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
                           // Password
                           AppTextField(
-                            label: 'Password (for Admin / Email login)',
+                            label: 'Password',
                             hint: '••••••••••',
                             controller: _passwordController,
                             obscureText: _obscurePassword,
@@ -269,14 +260,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                             autofillHints: const [AutofillHints.password],
                             prefixIcon: Icons.lock_outline_rounded,
                             onSubmitted: (_) => _signIn(),
-                            validator: (v) {
-                              final id = _emailController.text.trim();
-                              final digits = id.replaceAll(RegExp(r'\D'), '');
-                              if (digits.length >= 10 && !id.contains('@')) {
-                                return null; // Password optional for mobile-based tenant portal
-                              }
-                              return Validators.password(v);
-                            },
+                            validator: Validators.password,
                             suffixIcon: IconButton(
                               icon: Icon(
                                 _obscurePassword

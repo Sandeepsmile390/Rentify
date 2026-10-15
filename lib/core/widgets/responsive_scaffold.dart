@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../features/auth/providers/auth_provider.dart';
 import '../routing/routes.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
@@ -136,8 +138,9 @@ class _SideNav extends StatelessWidget {
   }
 }
 
-class _SideNavItem extends StatelessWidget {
+class _SideNavItem extends ConsumerWidget {
   const _SideNavItem({
+    super.key,
     required this.item,
     required this.selected,
     this.isLogout = false,
@@ -147,7 +150,7 @@ class _SideNavItem extends StatelessWidget {
   final bool isLogout;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Material(
@@ -157,7 +160,7 @@ class _SideNavItem extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
           onTap: () {
             if (isLogout) {
-              _handleLogout(context);
+              _handleLogout(context, ref);
             } else {
               context.go(item.path);
             }
@@ -185,8 +188,8 @@ class _SideNavItem extends StatelessWidget {
                   item.label,
                   style: TextStyle(
                     color: selected
-                        ? AppColors.navyTextSelected
-                        : (isLogout ? Colors.redAccent : AppColors.navyText),
+                      ? AppColors.navyTextSelected
+                      : (isLogout ? Colors.redAccent : AppColors.navyText),
                     fontSize: 13,
                     fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                   ),
@@ -199,7 +202,7 @@ class _SideNavItem extends StatelessWidget {
     );
   }
 
-  Future<void> _handleLogout(BuildContext context) async {
+  Future<void> _handleLogout(BuildContext context, WidgetRef ref) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dCtx) => AlertDialog(
@@ -221,6 +224,7 @@ class _SideNavItem extends StatelessWidget {
       try {
         await Supabase.instance.client.auth.signOut();
       } catch (_) {}
+      ref.read(demoAuthProvider.notifier).logout();
       if (context.mounted) {
         context.go(Routes.login);
       }

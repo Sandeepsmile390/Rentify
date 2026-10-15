@@ -20,7 +20,18 @@ class AdminDashboardScreen extends ConsumerStatefulWidget {
 
 class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
   bool _isLoading = true;
+  String? _errorMessage;
   _DashboardData? _data;
+
+  static const _months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  String get _currentPeriodText {
+    final now = DateTime.now();
+    return '${_months[now.month - 1]} ${now.year}';
+  }
 
   @override
   void initState() {
@@ -82,9 +93,12 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
       int totalRentDue = 0;
       int totalElecDue = 0;
       int pendingBills = 0;
+      int activeCount = 0;
 
       final tenants = rows.map((t) {
         final tId = (t['id'] as String?) ?? '';
+        final bool isActive = (t['is_active'] as bool?) ?? true;
+        if (isActive) activeCount++;
         final rDue = rentDueByTenancy[tId] ?? 0;
         final eDue = elecDueByTenancy[tId] ?? 0;
         final totalDue = rDue + eDue;
@@ -98,6 +112,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
           name: (t['tenant_name'] as String?) ?? 'Unnamed',
           unit: (t['unit_id'] as String?) ?? '—',
           type: (t['tenant_type'] as String?) == 'shop' ? 'Shop' : 'Room',
+          isActive: isActive,
           rentDuePaise: rDue,
           elecDuePaise: eDue,
         );
@@ -179,11 +194,12 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
+        _errorMessage = null;
         _data = _DashboardData(
           totalRentDuePaise: totalRentDue,
           totalElecDuePaise: totalElecDue,
           collectedThisMonthPaise: collectedThisMonth,
-          activeTenants: tenants.where((t) => true).length,
+          activeTenants: activeCount,
           totalTenants: tenants.length,
           awaitingMeterReadings: awaitingMeterReadings,
           pendingBills: pendingBills,
@@ -191,11 +207,11 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
           tenants: tenants,
         );
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _data = _DashboardData.empty();
+        _errorMessage = 'Unable to refresh dashboard data. Please check connection and retry.';
       });
     }
   }
@@ -210,7 +226,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
           children: [
             Text('Dashboard', style: AppTextStyles.h2),
             Text(
-              'October 2026',
+              _currentPeriodText,
               style: AppTextStyles.caption,
             ),
           ],
@@ -227,14 +243,113 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
           IconButton(
             icon: const Icon(Icons.add_rounded),
             tooltip: 'Add tenant',
-            onPressed: () => context.push(Routes.createTenant),
+            onPressed: () async {
+              await context.push(Routes.createTenant);
+              _loadDashboard();
+            },
           ),
           const SizedBox(width: 8),
         ],
       ),
-      body: _isLoading
+      body: _isLoading && _data == null
           ? const _DashboardSkeleton()
-          : _DashboardBody(data: _data!),
+          : _errorMessage != null && _data == null
+              ? _DashboardErrorView(
+                  message: _errorMessage!,
+                  onRetry: () {
+                    setState(() {
+                      _isLoading = true;
+                      _errorMessage = null;
+                    });
+                    _loadDashboard();
+                  },
+                )
+              : _DashboardBody(
+                  data: _data ?? _DashboardData.empty(),
+                  onRefresh: _loadDashboard,
+                  errorMessage: _errorMessage,
+                ),
+    );
+  }
+}
+
+// ── Dashboard error view ──────────────────────────────────────────
+
+class _DashboardErrorView extends StatelessWidget {
+  const _DashboardErrorView({
+    required this.message,
+    required this.onRetry,
+  });
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_rounded, size: 56, color: AppColors.error),
+            const SizedBox(height: 16),
+            Text('Dashboard Unavailable', style: AppTextStyles.h2),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              style: AppTextStyles.bodyRegular.copyWith(color: AppColors.inkMuted),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Retry Connection'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardErrorBanner extends StatelessWidget {
+  const _DashboardErrorBanner({
+    required this.message,
+    required this.onRetry,
+  });
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.errorBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.errorBorder),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, size: 18, color: AppColors.error),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: AppTextStyles.caption.copyWith(color: AppColors.error),
+            ),
+          ),
+          TextButton(
+            onPressed: onRetry,
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+            ),
+            child: const Text('Retry', style: TextStyle(color: AppColors.error)),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -242,8 +357,14 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
 // ── Dashboard body ────────────────────────────────────────────────
 
 class _DashboardBody extends StatelessWidget {
-  const _DashboardBody({required this.data});
+  const _DashboardBody({
+    required this.data,
+    required this.onRefresh,
+    this.errorMessage,
+  });
   final _DashboardData data;
+  final Future<void> Function() onRefresh;
+  final String? errorMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -252,15 +373,20 @@ class _DashboardBody extends StatelessWidget {
     final isTablet = width >= 600;
 
     return RefreshIndicator(
-      onRefresh: () async {
-        await Future.delayed(const Duration(milliseconds: 600));
-      },
+      onRefresh: onRefresh,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: EdgeInsets.all(isWide ? 24 : 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (errorMessage != null) ...[
+              _DashboardErrorBanner(
+                message: errorMessage!,
+                onRetry: onRefresh,
+              ),
+              const SizedBox(height: 16),
+            ],
             // ── Summary stats row ──────────────────────────────
             _SummaryStatsRow(data: data, isWide: isTablet),
             const SizedBox(height: 20),
@@ -278,19 +404,23 @@ class _DashboardBody extends StatelessWidget {
                 children: [
                   Expanded(flex: 3, child: _RecentActivity(events: data.recentEvents)),
                   const SizedBox(width: 16),
-                  Expanded(flex: 2, child: _QuickAccess()),
+                  Expanded(flex: 2, child: _QuickAccess(onRefresh: onRefresh)),
                 ],
               )
             else ...[
               _RecentActivity(events: data.recentEvents),
               const SizedBox(height: 16),
-              _QuickAccess(),
+              _QuickAccess(onRefresh: onRefresh),
             ],
 
             const SizedBox(height: 24),
 
             // ── Tenant list ────────────────────────────────────
-            _TenantSection(tenants: data.tenants, isWide: isWide),
+            _TenantSection(
+              tenants: data.tenants,
+              isWide: isWide,
+              onRefresh: onRefresh,
+            ),
             const SizedBox(height: 32),
           ],
         ),
@@ -545,7 +675,8 @@ class _ActivityTile extends StatelessWidget {
 // ── Quick access ──────────────────────────────────────────────────
 
 class _QuickAccess extends StatelessWidget {
-  const _QuickAccess();
+  const _QuickAccess({this.onRefresh});
+  final Future<void> Function()? onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -566,22 +697,31 @@ class _QuickAccess extends StatelessWidget {
           _QuickItem(
             icon: Icons.person_add_outlined,
             label: 'Add tenant',
-            onTap: () => context.push(Routes.createTenant),
+            onTap: () async {
+              await context.push(Routes.createTenant);
+              onRefresh?.call();
+            },
           ),
           _QuickItem(
             icon: Icons.receipt_long_outlined,
             label: 'Record payment',
-            onTap: () => context.go(Routes.tenantDirectory),
+            onTap: () async {
+              await context.push(Routes.tenantDirectory);
+              onRefresh?.call();
+            },
           ),
           _QuickItem(
             icon: Icons.electric_meter_outlined,
             label: 'Enter meter reading',
-            onTap: () => context.go(Routes.tenantDirectory),
+            onTap: () async {
+              await context.push(Routes.tenantDirectory);
+              onRefresh?.call();
+            },
           ),
           _QuickItem(
             icon: Icons.bar_chart_rounded,
             label: 'View reports',
-            onTap: () => context.go(Routes.reports),
+            onTap: () => context.push(Routes.reports),
           ),
         ],
       ),
@@ -615,9 +755,14 @@ class _QuickItem extends StatelessWidget {
 // ── Tenant list section ───────────────────────────────────────────
 
 class _TenantSection extends StatefulWidget {
-  const _TenantSection({required this.tenants, required this.isWide});
+  const _TenantSection({
+    required this.tenants,
+    required this.isWide,
+    required this.onRefresh,
+  });
   final List<_TenantRow> tenants;
   final bool isWide;
+  final Future<void> Function() onRefresh;
 
   @override
   State<_TenantSection> createState() => _TenantSectionState();
@@ -676,7 +821,11 @@ class _TenantSectionState extends State<_TenantSection> {
           if (widget.isWide) _TenantTableHeader(),
 
           // Rows
-          ...filtered.map((t) => _TenantListTile(tenant: t, isWide: widget.isWide)),
+          ...filtered.map((t) => _TenantListTile(
+                tenant: t,
+                isWide: widget.isWide,
+                onRefresh: widget.onRefresh,
+              )),
 
           if (widget.tenants.isEmpty)
             Padding(
@@ -748,9 +897,14 @@ class _HeaderCell extends StatelessWidget {
 }
 
 class _TenantListTile extends StatelessWidget {
-  const _TenantListTile({required this.tenant, required this.isWide});
+  const _TenantListTile({
+    required this.tenant,
+    required this.isWide,
+    required this.onRefresh,
+  });
   final _TenantRow tenant;
   final bool isWide;
+  final Future<void> Function() onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -758,8 +912,10 @@ class _TenantListTile extends StatelessWidget {
     final dueColor = hasDues ? AppColors.amountDue : AppColors.amountPositive;
 
     return InkWell(
-      onTap: () =>
-          context.push('${Routes.tenantProfile}/${tenant.tenancyId}'),
+      onTap: () async {
+        await context.push('${Routes.tenantProfile}/${tenant.tenancyId}');
+        onRefresh();
+      },
       child: Container(
         decoration: BoxDecoration(
           border: Border(
@@ -954,6 +1110,7 @@ class _TenantRow {
   final String name;
   final String unit;
   final String type;
+  final bool isActive;
   final int rentDuePaise;
   final int elecDuePaise;
 
@@ -962,6 +1119,7 @@ class _TenantRow {
     required this.name,
     required this.unit,
     required this.type,
+    this.isActive = true,
     required this.rentDuePaise,
     required this.elecDuePaise,
   });

@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../core/config/env.dart';
 
 /// State for local/demo session when testing without live Supabase cloud instance.
 class DemoAuthState {
@@ -47,12 +49,16 @@ final currentUserProvider = Provider<User?>((ref) {
   return authState.value?.session?.user;
 });
 
-/// Returns true if either a Supabase session or demo session is authenticated.
+/// Returns true if a valid Supabase session is authenticated,
+/// or in offline debug mode only if no live backend is configured.
 final isAuthenticatedProvider = Provider<bool>((ref) {
   final supabaseAuth = ref.watch(authStateProvider);
   if (supabaseAuth.value?.session != null) return true;
-  final demoAuth = ref.watch(demoAuthProvider);
-  return demoAuth.isAuthenticated;
+  if (kDebugMode && Env.supabaseUrl.contains('placeholder')) {
+    final demoAuth = ref.watch(demoAuthProvider);
+    return demoAuth.isAuthenticated;
+  }
+  return false;
 });
 
 /// Returns the user's role ('admin' | 'tenant').
@@ -61,6 +67,9 @@ final currentRoleProvider = Provider<String>((ref) {
   if (user != null) {
     return (user.userMetadata?['role'] as String?) ?? 'tenant';
   }
-  final demoAuth = ref.watch(demoAuthProvider);
-  return demoAuth.role;
+  if (kDebugMode && Env.supabaseUrl.contains('placeholder')) {
+    final demoAuth = ref.watch(demoAuthProvider);
+    return demoAuth.role;
+  }
+  return 'tenant';
 });
