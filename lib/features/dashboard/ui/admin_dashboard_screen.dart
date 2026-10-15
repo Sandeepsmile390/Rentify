@@ -31,33 +31,163 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
   Future<void> _loadDashboard() async {
     try {
       final client = Supabase.instance.client;
+
+      // 1. Fetch tenancies
       final res = await client
           .from('tenancies')
           .select('id, unit_id, tenant_type, tenant_name, mobile, is_active')
           .order('created_at', ascending: false);
 
       final List<dynamic> rows = res as List<dynamic>;
-      final tenants = rows.map((t) => _TenantRow(
-            tenancyId: (t['id'] as String?) ?? '',
-            name: (t['tenant_name'] as String?) ?? 'Unnamed',
-            unit: (t['unit_id'] as String?) ?? '—',
-            type: (t['tenant_type'] as String?) == 'shop' ? 'Shop' : 'Room',
-            rentDuePaise: 0,
-            elecDuePaise: 0,
-          )).toList();
+
+      // 2. Fetch unpaid/partial charges
+      final chargesRes = await client
+          .from('charges')
+          .select('id, tenancy_id, charge_type, amount_paise, status')
+          .neq('status', 'paid')
+          .neq('status', 'waived');
+
+      // 3. Fetch payment allocations to compute remaining dues
+      final Map<String, int> allocatedByCharge = {};
+      try {
+        final allocRes = await client
+            .from('payment_allocations')
+            .select('charge_id, amount_paise, is_reversed')
+            .eq('is_reversed', false);
+        for (final a in (allocRes as List<dynamic>)) {
+          final cId = (a['charge_id'] as String?) ?? '';
+          final amt = (a['amount_paise'] as num?)?.toInt() ?? 0;
+          allocatedByCharge[cId] = (allocatedByCharge[cId] ?? 0) + amt;
+        }
+      } catch (_) {}
+
+      final Map<String, int> rentDueByTenancy = {};
+      final Map<String, int> elecDueByTenancy = {};
+
+      for (final c in (chargesRes as List<dynamic>)) {
+        final tId = (c['tenancy_id'] as String?) ?? '';
+        final cId = (c['id'] as String?) ?? '';
+        final cType = (c['charge_type'] as String?) ?? 'rent';
+        final originalAmt = (c['amount_paise'] as num?)?.toInt() ?? 0;
+        final allocated = allocatedByCharge[cId] ?? 0;
+        final remaining = (originalAmt - allocated).clamp(0, originalAmt);
+
+        if (cType == 'rent') {
+          rentDueByTenancy[tId] = (rentDueByTenancy[tId] ?? 0) + remaining;
+        } else if (cType == 'electricity') {
+          elecDueByTenancy[tId] = (elecDueByTenancy[tId] ?? 0) + remaining;
+        }
+      }
+
+      int totalRentDue = 0;
+      int totalElecDue = 0;
+      int pendingBills = 0;
+
+      final tenants = rows.map((t) {
+        final tId = (t['id'] as String?) ?? '';
+        final rDue = rentDueByTenancy[tId] ?? 0;
+        final eDue = elecDueByTenancy[tId] ?? 0;
+        final totalDue = rDue + eDue;
+
+        totalRentDue += rDue;
+        totalElecDue += eDue;
+        if (totalDue > 0) pendingBills++;
+
+        return _TenantRow(
+          tenancyId: tId,
+          name: (t['tenant_name'] as String?) ?? 'Unnamed',
+          unit: (t['unit_id'] as String?) ?? '—',
+          type: (t['tenant_type'] as String?) == 'shop' ? 'Shop' : 'Room',
+          rentDuePaise: rDue,
+          elecDuePaise: eDue,
+        );
+      }).toList();
+
+      // 4. Collections this month
+      int collectedThisMonth = 0;
+      final now = DateTime.now();
+      final monthStart = '${now.year}-${now.month.toString().padLeft(2, '0')}-01';
+
+      try {
+        final paymentsRes = await client
+            .from('payments')
+            .select('amount_paise, payment_date')
+            .eq('is_reversed', false)
+            .gte('payment_date', monthStart);
+
+        for (final p in (paymentsRes as List<dynamic>)) {
+          collectedThisMonth += (p['amount_paise'] as num?)?.toInt() ?? 0;
+        }
+      } catch (_) {}
+
+      // 5. Awaiting meter readings
+      int awaitingMeterReadings = 0;
+      try {
+        final meterConfigs = await client
+            .from('electricity_config')
+            .select('tenancy_id, mode')
+            .eq('mode', 'meter');
+
+        final meterReadingsThisMonth = await client
+            .from('meter_readings')
+            .select('tenancy_id')
+            .eq('billing_month', monthStart);
+
+        final recordedTenancies = (meterReadingsThisMonth as List<dynamic>)
+            .map((m) => (m['tenancy_id'] as String?) ?? '')
+            .toSet();
+
+        for (final mc in (meterConfigs as List<dynamic>)) {
+          final tId = (mc['tenancy_id'] as String?) ?? '';
+          if (tId.isNotEmpty && !recordedTenancies.contains(tId)) {
+            awaitingMeterReadings++;
+          }
+        }
+      } catch (_) {}
+
+      // 6. Recent activity events
+      final List<_ActivityEvent> recentEvents = [];
+      try {
+        final eventsRes = await client
+            .from('payments')
+            .select('amount_paise, method, payment_date, created_at, tenancy_id')
+            .eq('is_reversed', false)
+            .order('created_at', ascending: false)
+            .limit(5);
+
+        final Map<String, String> tenantNameMap = {
+          for (final t in tenants) t.tenancyId: '${t.name} (${t.unit})'
+        };
+
+        for (final ev in (eventsRes as List<dynamic>)) {
+          final amt = (ev['amount_paise'] as num?)?.toInt() ?? 0;
+          final method = (ev['method'] as String?) ?? 'cash';
+          final tId = (ev['tenancy_id'] as String?) ?? '';
+          final tenantDesc = tenantNameMap[tId] ?? 'Tenant';
+
+          recentEvents.add(_ActivityEvent(
+            icon: Icons.payments_rounded,
+            iconColor: AppColors.success,
+            iconBg: AppColors.successBg,
+            title: 'Payment: ${CurrencyFormatter.fromPaise(amt)}',
+            subtitle: '$tenantDesc · ${method.toUpperCase()}',
+            time: (ev['payment_date'] as String?) ?? 'Recent',
+          ));
+        }
+      } catch (_) {}
 
       if (!mounted) return;
       setState(() {
         _isLoading = false;
         _data = _DashboardData(
-          totalRentDuePaise: 0,
-          totalElecDuePaise: 0,
-          collectedThisMonthPaise: 0,
+          totalRentDuePaise: totalRentDue,
+          totalElecDuePaise: totalElecDue,
+          collectedThisMonthPaise: collectedThisMonth,
           activeTenants: tenants.where((t) => true).length,
           totalTenants: tenants.length,
-          awaitingMeterReadings: 0,
-          pendingBills: 0,
-          recentEvents: const [],
+          awaitingMeterReadings: awaitingMeterReadings,
+          pendingBills: pendingBills,
+          recentEvents: recentEvents,
           tenants: tenants,
         );
       });

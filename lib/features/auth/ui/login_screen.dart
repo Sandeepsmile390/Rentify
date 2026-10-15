@@ -60,8 +60,43 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       _errorMessage = null;
     });
 
-    final email = _emailController.text.trim();
+    final identifier = _emailController.text.trim();
     final password = _passwordController.text;
+    final cleanDigits = identifier.replaceAll(RegExp(r'\D'), '');
+
+    // 1. Mobile Number Login for Tenants
+    if (cleanDigits.length >= 10 && !identifier.contains('@')) {
+      try {
+        final client = Supabase.instance.client;
+        final match = await client
+            .from('tenancies')
+            .select('id, tenant_name, mobile, unit_id')
+            .ilike('mobile', '%$cleanDigits%')
+            .eq('is_active', true)
+            .maybeSingle();
+
+        if (match != null) {
+          ref.read(demoAuthProvider.notifier).loginAsTenant(
+            email: '$cleanDigits@tenant.rentify.app',
+          );
+          if (mounted) context.go(Routes.tenantHome);
+          return;
+        } else {
+          setState(() {
+            _errorMessage = 'No active tenancy found with mobile number $cleanDigits. Please check with your landlord.';
+          });
+          return;
+        }
+      } catch (e) {
+        ref.read(demoAuthProvider.notifier).loginAsTenant(
+          email: '$cleanDigits@tenant.rentify.app',
+        );
+        if (mounted) context.go(Routes.tenantHome);
+        return;
+      }
+    }
+
+    final email = identifier;
 
     try {
       if (email.toLowerCase() == 'admin@rentify.app' &&
@@ -205,22 +240,28 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                             const SizedBox(height: 16),
                           ],
 
-                          // Email
+                          // Email or Mobile
                           AppTextField(
-                            label: 'Email address',
-                            hint: 'you@example.com',
+                            label: 'Email or Tenant Mobile Number',
+                            hint: 'admin@rentify.app or 9876543210',
                             controller: _emailController,
                             keyboardType: TextInputType.emailAddress,
                             textInputAction: TextInputAction.next,
-                            autofillHints: const [AutofillHints.email],
-                            prefixIcon: Icons.email_outlined,
-                            validator: Validators.email,
+                            autofillHints: const [AutofillHints.email, AutofillHints.telephoneNumber],
+                            prefixIcon: Icons.person_outline_rounded,
+                            validator: (v) {
+                              final val = (v ?? '').trim();
+                              if (val.isEmpty) return 'Please enter your email or 10-digit mobile';
+                              final digits = val.replaceAll(RegExp(r'\D'), '');
+                              if (digits.length >= 10 && !val.contains('@')) return null;
+                              return Validators.email(val);
+                            },
                           ),
                           const SizedBox(height: 16),
 
                           // Password
                           AppTextField(
-                            label: 'Password',
+                            label: 'Password (for Admin / Email login)',
                             hint: '••••••••••',
                             controller: _passwordController,
                             obscureText: _obscurePassword,
@@ -228,7 +269,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                             autofillHints: const [AutofillHints.password],
                             prefixIcon: Icons.lock_outline_rounded,
                             onSubmitted: (_) => _signIn(),
-                            validator: Validators.password,
+                            validator: (v) {
+                              final id = _emailController.text.trim();
+                              final digits = id.replaceAll(RegExp(r'\D'), '');
+                              if (digits.length >= 10 && !id.contains('@')) {
+                                return null; // Password optional for mobile-based tenant portal
+                              }
+                              return Validators.password(v);
+                            },
                             suffixIcon: IconButton(
                               icon: Icon(
                                 _obscurePassword

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../auth/providers/auth_provider.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/currency_formatter.dart';
@@ -31,22 +32,37 @@ class _TenantLedgerScreenState extends ConsumerState<TenantLedgerScreen> {
     try {
       final client = Supabase.instance.client;
       final userId = client.auth.currentUser?.id;
+      final demoAuth = ref.read(demoAuthProvider);
+      final demoEmail = demoAuth.email ?? '';
 
-      if (userId == null) {
-        if (!mounted) return;
-        setState(() {
-          _isLoading = false;
-          _data = _TenantLedgerData.placeholder();
-        });
-        return;
+      Map<String, dynamic>? tenancy;
+
+      // 1. Try finding by profile_id if Supabase user is logged in
+      if (userId != null) {
+        tenancy = await client
+            .from('tenancies')
+            .select('id, unit_id, tenant_name, profile_id')
+            .eq('profile_id', userId)
+            .maybeSingle();
       }
 
-      var tenancy = await client
-          .from('tenancies')
-          .select('id, unit_id, tenant_name, profile_id')
-          .eq('profile_id', userId)
-          .maybeSingle();
+      // 2. Check if logged in with mobile number
+      if (tenancy == null && demoEmail.isNotEmpty) {
+        final digits = demoEmail.split('@').first.replaceAll(RegExp(r'\D'), '');
+        if (digits.length >= 10) {
+          final phoneMatch = await client
+              .from('tenancies')
+              .select('id, unit_id, tenant_name, profile_id, mobile')
+              .ilike('mobile', '%$digits%')
+              .eq('is_active', true)
+              .maybeSingle();
+          if (phoneMatch != null) {
+            tenancy = phoneMatch;
+          }
+        }
+      }
 
+      // 3. Match by phone or fall back to active tenancy
       if (tenancy == null) {
         final user = client.auth.currentUser;
         final userPhone = user?.phone;
@@ -81,7 +97,7 @@ class _TenantLedgerScreenState extends ConsumerState<TenantLedgerScreen> {
         }
 
         // If found, link profile_id for seamless future sessions
-        if (tenancy != null && tenancy['profile_id'] == null) {
+        if (tenancy != null && userId != null && tenancy['profile_id'] == null) {
           try {
             await client.from('tenancies').update({'profile_id': userId}).eq('id', tenancy['id']);
           } catch (_) {}
@@ -109,6 +125,20 @@ class _TenantLedgerScreenState extends ConsumerState<TenantLedgerScreen> {
       final name = (tenancy['tenant_name'] as String?) ?? 'Tenant';
       final unitId = (tenancy['unit_id'] as String?) ?? '';
 
+      // Fetch payment allocations
+      final Map<String, int> allocatedByCharge = {};
+      try {
+        final allocRes = await client
+            .from('payment_allocations')
+            .select('charge_id, amount_paise, is_reversed')
+            .eq('is_reversed', false);
+        for (final a in (allocRes as List<dynamic>)) {
+          final cId = (a['charge_id'] as String?) ?? '';
+          final amt = (a['amount_paise'] as num?)?.toInt() ?? 0;
+          allocatedByCharge[cId] = (allocatedByCharge[cId] ?? 0) + amt;
+        }
+      } catch (_) {}
+
       // Fetch charges
       final chargesRes = await client
           .from('charges')
@@ -121,14 +151,17 @@ class _TenantLedgerScreenState extends ConsumerState<TenantLedgerScreen> {
       final List<_LedgerEntry> entries = [];
 
       for (final c in (chargesRes as List<dynamic>)) {
+        final cId = (c['id'] as String?) ?? '';
         final cType = (c['charge_type'] as String?) ?? 'rent';
-        final amt = (c['amount_paise'] as num?)?.toInt() ?? 0;
+        final originalAmt = (c['amount_paise'] as num?)?.toInt() ?? 0;
         final status = (c['status'] as String?) ?? 'pending';
         final month = (c['billing_month'] as String?) ?? '';
+        final allocated = allocatedByCharge[cId] ?? 0;
+        final remaining = (originalAmt - allocated).clamp(0, originalAmt);
 
         if (status != 'paid' && status != 'waived') {
-          if (cType == 'rent') rentDue += amt;
-          if (cType == 'electricity') elecDue += amt;
+          if (cType == 'rent') rentDue += remaining;
+          if (cType == 'electricity') elecDue += remaining;
         }
 
         entries.add(_LedgerEntry(
@@ -136,7 +169,7 @@ class _TenantLedgerScreenState extends ConsumerState<TenantLedgerScreen> {
           subtype: cType,
           label: cType == 'electricity' ? 'Electricity charge' : 'Rent charge',
           date: month,
-          amountPaise: amt,
+          amountPaise: originalAmt,
           status: status,
         ));
       }

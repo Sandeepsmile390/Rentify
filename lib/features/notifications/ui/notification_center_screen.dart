@@ -31,14 +31,34 @@ class _NotificationCenterScreenState
       final client = Supabase.instance.client;
       final userId = client.auth.currentUser?.id;
 
-      var query = client.from('notifications').select('*');
+      // Check current user role
+      String userRole = 'admin';
       if (userId != null) {
-        query = query.eq('recipient_id', userId);
+        try {
+          final profile = await client
+              .from('profiles')
+              .select('role')
+              .eq('id', userId)
+              .maybeSingle();
+          if (profile != null && profile['role'] != null) {
+            userRole = profile['role'] as String;
+          }
+        } catch (_) {}
       }
-      final res = await query.order('created_at', ascending: false);
+
+      final res = await client
+          .from('notifications')
+          .select('*')
+          .order('created_at', ascending: false)
+          .limit(50);
 
       final rows = res as List<dynamic>;
-      final list = rows.map((r) {
+      final list = rows.where((r) {
+        if (userRole == 'admin') return true;
+        final forRole = (r['for_role'] as String?)?.toLowerCase();
+        final rId = r['recipient_id'] as String?;
+        return forRole == 'tenant' || forRole == 'all' || rId == userId || forRole == null;
+      }).map((r) {
         final d = DateTime.tryParse((r['created_at'] as String?) ?? '') ?? DateTime.now();
         final diff = DateTime.now().difference(d);
         String timeAgo;
@@ -50,13 +70,16 @@ class _NotificationCenterScreenState
           timeAgo = '${diff.inDays}d ago';
         }
 
+        final rawBody = (r['body'] as String?) ?? (r['message'] as String?) ?? '';
+        final rawTitle = (r['title'] as String?) ?? 'Notice';
+
         return _NotifItem(
           id: (r['id'] as String?) ?? '',
           category: (r['category'] as String?) ?? 'system',
-          title: (r['title'] as String?) ?? 'Notification',
-          body: (r['body'] as String?) ?? '',
+          title: rawTitle,
+          body: rawBody,
           timeAgo: timeAgo,
-          isRead: (r['is_read'] as bool?) ?? false,
+          isRead: (r['is_read'] as bool?) ?? (r['read'] as bool?) ?? false,
         );
       }).toList();
 
@@ -79,14 +102,17 @@ class _NotificationCenterScreenState
     try {
       final client = Supabase.instance.client;
       final userId = client.auth.currentUser?.id;
-      if (userId == null) return;
 
       await client.from('notifications').insert({
-        'recipient_id': userId,
+        'id': 'notif-${DateTime.now().millisecondsSinceEpoch}',
+        if (userId != null) 'recipient_id': userId,
+        'for_role': 'admin',
         'category': 'payment',
         'title': 'Test Notification Alert',
         'body': 'Popup notifications and alerts are successfully enabled in Rentify!',
+        'message': 'Popup notifications and alerts are successfully enabled in Rentify!',
         'is_read': false,
+        'read': false,
       });
 
       // Request or verify permission
@@ -95,7 +121,7 @@ class _NotificationCenterScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Test notification sent and permission active!'),
+          content: Text('Test notification sent and alerts active!'),
           backgroundColor: AppColors.success,
         ),
       );
@@ -107,6 +133,90 @@ class _NotificationCenterScreenState
         SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.error),
       );
     }
+  }
+
+  void _showBroadcastSheet() {
+    final titleCtrl = TextEditingController();
+    final bodyCtrl = TextEditingController();
+    String selectedRole = 'tenant';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetCtx) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(sheetCtx).bottom,
+          top: 24, left: 24, right: 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Broadcast Notice', style: AppTextStyles.h2),
+            const SizedBox(height: 16),
+            TextField(
+              controller: titleCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Notice Title',
+                hintText: 'e.g. Water Tank Maintenance, Rent Reminder',
+                prefixIcon: Icon(Icons.campaign_outlined),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: bodyCtrl,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Message Body',
+                hintText: 'Enter announcement details for tenants...',
+                prefixIcon: Icon(Icons.chat_bubble_outline_rounded),
+              ),
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              icon: const Icon(Icons.send_rounded),
+              label: const Text('Send Broadcast Notice'),
+              onPressed: () async {
+                final title = titleCtrl.text.trim();
+                final msg = bodyCtrl.text.trim();
+                if (title.isEmpty || msg.isEmpty) return;
+
+                Navigator.pop(sheetCtx);
+                try {
+                  final client = Supabase.instance.client;
+                  await client.from('notifications').insert({
+                    'id': 'notif-${DateTime.now().millisecondsSinceEpoch}',
+                    'title': '📢 $title',
+                    'body': msg,
+                    'message': msg,
+                    'for_role': selectedRole,
+                    'category': 'system',
+                    'is_read': false,
+                    'read': false,
+                  });
+
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Notice broadcasted to all tenants!'),
+                      backgroundColor: AppColors.success,
+                    ),
+                  );
+                  setState(() => _isLoading = true);
+                  _load();
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to broadcast: $e'), backgroundColor: AppColors.error),
+                  );
+                }
+              },
+            ),
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _markAllRead() async {
@@ -153,6 +263,11 @@ class _NotificationCenterScreenState
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.campaign_outlined),
+            tooltip: 'Broadcast notice',
+            onPressed: _showBroadcastSheet,
+          ),
           IconButton(
             icon: const Icon(Icons.notification_add_outlined),
             tooltip: 'Send test alert',

@@ -396,6 +396,15 @@ class _ProfileAppBar extends StatelessWidget {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.key_rounded, color: AppColors.action),
+              title: const Text('Share tenant login details'),
+              subtitle: const Text('Send app portal link & access info via WhatsApp'),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                _shareTenantLoginDetails(context, data);
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.folder_outlined),
               title: const Text('Documents'),
               onTap: () {
@@ -1010,6 +1019,49 @@ Future<void> _sendWhatsAppDuesSummary(BuildContext context, _ProfileData data) a
   message.writeln('👉 *Total Outstanding: ${CurrencyFormatter.fromPaise(data.totalDuePaise)}*');
   message.writeln('');
   message.writeln('Please clear the pending balance at your earliest convenience. Thank you!');
+
+  final cleanMobile = data.mobile.replaceAll(RegExp(r'\D'), '');
+  final phone = cleanMobile.length == 10 ? '91$cleanMobile' : cleanMobile;
+  final encodedMsg = Uri.encodeComponent(message.toString());
+
+  final uri = Uri.parse(
+    phone.isNotEmpty
+        ? 'https://wa.me/$phone?text=$encodedMsg'
+        : 'https://wa.me/?text=$encodedMsg',
+  );
+
+  try {
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched) {
+      await launchUrl(uri, mode: LaunchMode.platformDefault);
+    }
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not open WhatsApp: $e'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    }
+  }
+}
+
+Future<void> _shareTenantLoginDetails(BuildContext context, _ProfileData data) async {
+  final message = StringBuffer();
+  message.writeln('🔑 *Rentify Tenant Portal Access*');
+  message.writeln('Dear ${data.name},');
+  message.writeln('You have been registered as a resident for *${data.unitId}*.');
+  message.writeln('');
+  message.writeln('📱 You can view your monthly rent dues, electricity meter readings, advance deposit balance, and payment receipts anytime on our portal:');
+  message.writeln('👉 https://rentify-sandy-delta.vercel.app');
+  message.writeln('');
+  message.writeln('🔐 *How to Login:*');
+  message.writeln('1. Open the portal link or download the Rentify App');
+  message.writeln('2. Enter your registered mobile: *${data.mobile}*');
+  message.writeln('3. Access your private tenant dashboard instantly!');
+  message.writeln('');
+  message.writeln('Thank you!');
 
   final cleanMobile = data.mobile.replaceAll(RegExp(r'\D'), '');
   final phone = cleanMobile.length == 10 ? '91$cleanMobile' : cleanMobile;
