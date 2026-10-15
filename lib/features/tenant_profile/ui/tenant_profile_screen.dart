@@ -375,7 +375,7 @@ class _ProfileAppBar extends StatelessWidget {
               leading: const Icon(Icons.swap_vert_rounded),
               title: const Text('Advance / Deposit'),
               onTap: () {
-                Navigator.of(sheetCtx, rootNavigator: true).pop();
+                Navigator.pop(sheetCtx);
                 context.pushNamed('advances', pathParameters: {'tenancyId': tenancyId});
               },
             ),
@@ -383,7 +383,7 @@ class _ProfileAppBar extends StatelessWidget {
               leading: const Icon(Icons.history_rounded),
               title: const Text('Audit trail'),
               onTap: () {
-                Navigator.of(sheetCtx, rootNavigator: true).pop();
+                Navigator.pop(sheetCtx);
                 context.pushNamed('audit-trail', pathParameters: {'tenancyId': tenancyId});
               },
             ),
@@ -391,7 +391,7 @@ class _ProfileAppBar extends StatelessWidget {
               leading: const Icon(Icons.share_rounded, color: Color(0xFF25D366)),
               title: const Text('Send WhatsApp dues summary'),
               onTap: () {
-                Navigator.of(sheetCtx, rootNavigator: true).pop();
+                Navigator.pop(sheetCtx);
                 _sendWhatsAppDuesSummary(context, data);
               },
             ),
@@ -399,7 +399,7 @@ class _ProfileAppBar extends StatelessWidget {
               leading: const Icon(Icons.folder_outlined),
               title: const Text('Documents'),
               onTap: () {
-                Navigator.of(sheetCtx, rootNavigator: true).pop();
+                Navigator.pop(sheetCtx);
                 context.pushNamed('documents', pathParameters: {'tenancyId': tenancyId});
               },
             ),
@@ -408,7 +408,7 @@ class _ProfileAppBar extends StatelessWidget {
               leading: const Icon(Icons.delete_forever_rounded, color: AppColors.error),
               title: const Text('Delete tenant', style: TextStyle(color: AppColors.error, fontWeight: FontWeight.w600)),
               onTap: () {
-                Navigator.of(sheetCtx, rootNavigator: true).pop();
+                Navigator.pop(sheetCtx);
                 _confirmDeleteTenant(context, tenancyId, data.name);
               },
             ),

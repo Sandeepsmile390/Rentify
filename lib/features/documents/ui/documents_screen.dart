@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../core/routing/routes.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/widgets/app_button.dart';
@@ -219,12 +221,26 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     }
   }
 
+  void _navigateBack() {
+    if (context.canPop()) {
+      context.pop();
+    } else if (widget.tenancyId != null) {
+      context.go('${Routes.tenantProfile}/${widget.tenancyId}');
+    } else {
+      context.go(Routes.tenantHome);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.canvas,
       appBar: AppBar(
         title: Text('Documents', style: AppTextStyles.h2),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: _navigateBack,
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded),

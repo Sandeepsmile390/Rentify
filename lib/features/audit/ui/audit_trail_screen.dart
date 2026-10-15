@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../core/routing/routes.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/currency_formatter.dart';
@@ -167,12 +169,24 @@ class _AuditTrailScreenState extends State<AuditTrailScreen> {
     }
   }
 
+  void _navigateBack() {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('${Routes.tenantProfile}/${widget.tenancyId}');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.canvas,
       appBar: AppBar(
         title: Text('Audit Trail', style: AppTextStyles.h2),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: _navigateBack,
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded),

@@ -222,7 +222,7 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
                     label: 'Done',
                     type: AppButtonType.primary,
                     onPressed: () {
-                      Navigator.of(sheetCtx, rootNavigator: true).pop();
+                      Navigator.pop(sheetCtx);
                       if (mounted) _navigateBack();
                     },
                   ),

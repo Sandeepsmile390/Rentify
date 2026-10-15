@@ -99,7 +99,7 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
       final now = DateTime.now();
       final billingMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}-01';
 
-      final readingRow = await client.from('meter_readings').insert({
+      final readingRow = await client.from('meter_readings').upsert({
         'tenancy_id': widget.tenancyId,
         'billing_month': billingMonth,
         'previous_reading': _previousReading,
@@ -108,7 +108,7 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
         'amount_paise': _chargeAmountPaise,
         'notes': _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
         if (userId != null) 'created_by': userId,
-      }).select().single();
+      }, onConflict: 'tenancy_id,billing_month').select().single();
 
       final readingId = readingRow['id'] as String?;
 
@@ -160,7 +160,7 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
               AppButton(
                 label: 'Done',
                 onPressed: () {
-                  Navigator.of(sheetCtx, rootNavigator: true).pop();
+                  Navigator.pop(sheetCtx);
                   if (mounted) _navigateBack();
                 },
               ),
