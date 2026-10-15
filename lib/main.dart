@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'core/config/env.dart';
 import 'core/routing/app_router.dart';
+import 'core/services/notification_service.dart';
 import 'core/theme/app_theme.dart';
 
 Future<void> main() async {
@@ -21,11 +22,24 @@ Future<void> main() async {
   );
 }
 
-class RentifyApp extends ConsumerWidget {
+class RentifyApp extends ConsumerStatefulWidget {
   const RentifyApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<RentifyApp> createState() => _RentifyAppState();
+}
+
+class _RentifyAppState extends ConsumerState<RentifyApp> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      NotificationService.initializeAndPrompt();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final router = ref.watch(appRouterProvider);
     return MaterialApp.router(
       title: 'Rentify',
@@ -35,3 +49,4 @@ class RentifyApp extends ConsumerWidget {
     );
   }
 }
+

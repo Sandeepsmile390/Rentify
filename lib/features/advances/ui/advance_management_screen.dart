@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/currency_formatter.dart';
 import '../../../core/widgets/app_button.dart';
-import '../../../core/widgets/status_chip.dart';
 
 /// Figma frame 11 — Advance / Security deposit management
 class AdvanceManagementScreen extends ConsumerStatefulWidget {
@@ -30,12 +29,89 @@ class _AdvanceManagementScreenState
   }
 
   Future<void> _load() async {
-    await Future.delayed(const Duration(milliseconds: 500));
-    if (!mounted) return;
-    setState(() {
-      _isLoading = false;
-      _data = _AdvanceData.placeholder();
-    });
+    try {
+      final client = Supabase.instance.client;
+      var advanceRes = await client
+          .from('tenant_advances')
+          .select('id')
+          .eq('tenancy_id', widget.tenancyId)
+          .maybeSingle();
+
+      String advanceId;
+      if (advanceRes == null) {
+        final inserted = await client
+            .from('tenant_advances')
+            .insert({'tenancy_id': widget.tenancyId})
+            .select('id')
+            .single();
+        advanceId = inserted['id'] as String;
+      } else {
+        advanceId = advanceRes['id'] as String;
+      }
+
+      final txnsRes = await client
+          .from('advance_transactions')
+          .select('id, txn_type, amount_paise, reason, created_at')
+          .eq('advance_id', advanceId)
+          .order('created_at', ascending: false);
+
+      final txnRows = txnsRes as List<dynamic>;
+      int balance = 0;
+      int totalReceived = 0;
+      int totalApplied = 0;
+
+      final List<_AdvanceTxn> txns = [];
+      for (final r in txnRows) {
+        final amt = (r['amount_paise'] as num?)?.toInt() ?? 0;
+        final type = (r['txn_type'] as String?) ?? 'received';
+        final reason = r['reason'] as String?;
+        final dateStr = (r['created_at'] as String?) ?? '';
+        final dt = DateTime.tryParse(dateStr);
+        final formattedDate = dt != null
+            ? '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}'
+            : 'Recent';
+
+        balance += amt;
+        if (amt > 0) totalReceived += amt;
+        if (type == 'applied') totalApplied += amt.abs();
+
+        final label = type == 'received'
+            ? 'Deposit received'
+            : (type == 'refunded'
+                ? 'Advance refunded'
+                : (type == 'applied' ? 'Applied to charge' : 'Balance adjustment'));
+
+        txns.add(_AdvanceTxn(
+          label: label,
+          date: formattedDate,
+          amountPaise: amt,
+          reason: reason,
+        ));
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _data = _AdvanceData(
+          balancePaise: balance,
+          totalReceivedPaise: totalReceived,
+          totalAppliedPaise: totalApplied,
+          transactions: txns,
+        );
+      });
+    } catch (e) {
+      debugPrint('Error loading advances: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _data = const _AdvanceData(
+          balancePaise: 0,
+          totalReceivedPaise: 0,
+          totalAppliedPaise: 0,
+          transactions: [],
+        );
+      });
+    }
   }
 
   void _showAddTransactionSheet() {
@@ -47,16 +123,60 @@ class _AdvanceManagementScreenState
           bottom: MediaQuery.viewInsetsOf(ctx).bottom,
         ),
         child: _AddTransactionSheet(
-          onSubmit: (type, amountPaise, reason) {
+          onSubmit: (type, amountPaise, reason) async {
             Navigator.of(ctx, rootNavigator: true).pop();
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  '${type == 'received' ? 'Deposit received' : 'Transaction recorded'}: ${CurrencyFormatter.fromPaise(amountPaise)}',
+            try {
+              final client = Supabase.instance.client;
+              final userId = client.auth.currentUser?.id;
+
+              var advanceRes = await client
+                  .from('tenant_advances')
+                  .select('id')
+                  .eq('tenancy_id', widget.tenancyId)
+                  .maybeSingle();
+
+              String advanceId;
+              if (advanceRes == null) {
+                final inserted = await client
+                    .from('tenant_advances')
+                    .insert({'tenancy_id': widget.tenancyId})
+                    .select('id')
+                    .single();
+                advanceId = inserted['id'] as String;
+              } else {
+                advanceId = advanceRes['id'] as String;
+              }
+
+              final finalAmount = (type == 'refunded') ? -amountPaise : amountPaise;
+
+              await client.from('advance_transactions').insert({
+                'advance_id': advanceId,
+                'txn_type': type,
+                'amount_paise': finalAmount,
+                'reason': (reason != null && reason.trim().isNotEmpty) ? reason.trim() : null,
+                if (userId != null) 'created_by': userId,
+              });
+
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    '${type == 'received' ? 'Deposit received' : (type == 'refunded' ? 'Refund recorded' : 'Adjustment recorded')}: ${CurrencyFormatter.fromPaise(amountPaise)}',
+                  ),
+                  backgroundColor: AppColors.success,
                 ),
-                backgroundColor: AppColors.success,
-              ),
-            );
+              );
+              setState(() => _isLoading = true);
+              _load();
+            } catch (e) {
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Failed to record transaction: $e'),
+                  backgroundColor: AppColors.error,
+                ),
+              );
+            }
           },
         ),
       ),
@@ -322,13 +442,6 @@ class _AdvanceData {
   final int balancePaise, totalReceivedPaise, totalAppliedPaise;
   final List<_AdvanceTxn> transactions;
   const _AdvanceData({required this.balancePaise, required this.totalReceivedPaise, required this.totalAppliedPaise, required this.transactions});
-
-  factory _AdvanceData.placeholder() => _AdvanceData(
-    balancePaise: 1100000, totalReceivedPaise: 1100000, totalAppliedPaise: 0,
-    transactions: [
-      _AdvanceTxn(label: 'Security deposit received', date: '01 Jan 2025', amountPaise: 1100000, reason: 'Initial deposit at tenancy start'),
-    ],
-  );
 }
 
 class _AdvanceTxn {

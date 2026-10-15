@@ -44,6 +44,7 @@ dependencies:
   logging: ^1.2.0
 
   cupertino_icons: ^1.0.8
+  permission_handler: ^13.0.2
 
 dev_dependencies:
   flutter_test:

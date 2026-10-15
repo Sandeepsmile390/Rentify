@@ -121,6 +121,12 @@
     window.addEventListener('flutter-first-frame', hideLoading);
     // Safety fallback: ensure splash is never stuck for more than 2.5 seconds
     setTimeout(hideLoading, 2500);
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(regs) {
+        for (let reg of regs) { reg.update(); }
+      });
+    }
   </script>
 
   <script src="flutter_bootstrap.js" async></script>

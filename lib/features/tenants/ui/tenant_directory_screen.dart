@@ -8,6 +8,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/currency_formatter.dart';
 import '../../../core/widgets/status_chip.dart';
+import '../services/tenancy_service.dart';
 
 /// Figma frame 07 — Admin tenant directory (desktop + mobile adaptive)
 class TenantDirectoryScreen extends ConsumerStatefulWidget {
@@ -136,8 +137,20 @@ class _TenantDirectoryScreenState
                 : _filtered.isEmpty
                     ? _EmptyState(hasFilter: _searchQuery.isNotEmpty || _filterType != 'all' || _filterStatus != 'all')
                     : isWide
-                        ? _TenantTable(tenants: _filtered)
-                        : _TenantList(tenants: _filtered),
+                        ? _TenantTable(
+                            tenants: _filtered,
+                            onRefresh: () {
+                              setState(() => _isLoading = true);
+                              _load();
+                            },
+                          )
+                        : _TenantList(
+                            tenants: _filtered,
+                            onRefresh: () {
+                              setState(() => _isLoading = true);
+                              _load();
+                            },
+                          ),
           ),
         ],
       ),
@@ -302,8 +315,9 @@ class _SummaryRow extends StatelessWidget {
 // ── Desktop table ─────────────────────────────────────────────────
 
 class _TenantTable extends StatelessWidget {
-  const _TenantTable({required this.tenants});
+  const _TenantTable({required this.tenants, required this.onRefresh});
   final List<_TenantItem> tenants;
+  final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -327,7 +341,7 @@ class _TenantTable extends StatelessWidget {
               ],
             ),
           ),
-          ...tenants.map((t) => _TableRow(tenant: t)),
+          ...tenants.map((t) => _TableRow(tenant: t, onRefresh: onRefresh)),
         ],
       ),
     );
@@ -343,8 +357,9 @@ class _H extends StatelessWidget {
 }
 
 class _TableRow extends StatelessWidget {
-  const _TableRow({required this.tenant});
+  const _TableRow({required this.tenant, required this.onRefresh});
   final _TenantItem tenant;
+  final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -352,8 +367,8 @@ class _TableRow extends StatelessWidget {
     return InkWell(
       onTap: () => context.push('${Routes.tenantProfile}/${tenant.tenancyId}'),
       child: Container(
-        decoration: BoxDecoration(
-          border: const Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
@@ -402,9 +417,54 @@ class _TableRow extends StatelessWidget {
                 type: hasDues ? StatusChipType.error : StatusChipType.success,
               ),
             ),
-            const SizedBox(
+            SizedBox(
               width: 40,
-              child: Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.inkMuted),
+              child: PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert_rounded, size: 20, color: AppColors.inkMuted),
+                tooltip: 'Tenant actions',
+                onSelected: (val) {
+                  if (val == 'view') {
+                    context.push('${Routes.tenantProfile}/${tenant.tenancyId}');
+                  } else if (val == 'pay') {
+                    context.pushNamed('record-payment', pathParameters: {'tenancyId': tenant.tenancyId});
+                  } else if (val == 'delete') {
+                    _confirmDeleteTenantDirectory(context, tenant.tenancyId, tenant.name, onRefresh);
+                  }
+                },
+                itemBuilder: (ctx) => [
+                  const PopupMenuItem(
+                    value: 'view',
+                    child: Row(
+                      children: [
+                        Icon(Icons.person_outline, size: 18),
+                        SizedBox(width: 8),
+                        Text('View profile'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'pay',
+                    child: Row(
+                      children: [
+                        Icon(Icons.payments_outlined, size: 18, color: AppColors.action),
+                        SizedBox(width: 8),
+                        Text('Record payment'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_outline_rounded, size: 18, color: AppColors.error),
+                        SizedBox(width: 8),
+                        Text('Delete tenant', style: TextStyle(color: AppColors.error)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -416,22 +476,24 @@ class _TableRow extends StatelessWidget {
 // ── Mobile list ───────────────────────────────────────────────────
 
 class _TenantList extends StatelessWidget {
-  const _TenantList({required this.tenants});
+  const _TenantList({required this.tenants, required this.onRefresh});
   final List<_TenantItem> tenants;
+  final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
     return ListView.separated(
       itemCount: tenants.length,
       separatorBuilder: (_, __) => const Divider(height: 1),
-      itemBuilder: (ctx, i) => _MobileTenantTile(tenant: tenants[i]),
+      itemBuilder: (ctx, i) => _MobileTenantTile(tenant: tenants[i], onRefresh: onRefresh),
     );
   }
 }
 
 class _MobileTenantTile extends StatelessWidget {
-  const _MobileTenantTile({required this.tenant});
+  const _MobileTenantTile({required this.tenant, required this.onRefresh});
   final _TenantItem tenant;
+  final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -451,21 +513,72 @@ class _MobileTenantTile extends StatelessWidget {
       ),
       title: Text(tenant.name, style: AppTextStyles.bodyMedium),
       subtitle: Text('${tenant.unit} · ${tenant.mobile}', style: AppTextStyles.caption),
-      trailing: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.end,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            CurrencyFormatter.fromPaise(tenant.totalDuePaise),
-            style: AppTextStyles.currencySmall.copyWith(
-              color: hasDues ? AppColors.amountDue : AppColors.success,
-              fontWeight: FontWeight.w700,
-            ),
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                CurrencyFormatter.fromPaise(tenant.totalDuePaise),
+                style: AppTextStyles.currencySmall.copyWith(
+                  color: hasDues ? AppColors.amountDue : AppColors.success,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              StatusChip(
+                label: hasDues ? 'Dues' : 'Clear',
+                type: hasDues ? StatusChipType.error : StatusChipType.success,
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
-          StatusChip(
-            label: hasDues ? 'Dues' : 'Clear',
-            type: hasDues ? StatusChipType.error : StatusChipType.success,
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded, size: 20, color: AppColors.inkMuted),
+            tooltip: 'Actions',
+            onSelected: (val) {
+              if (val == 'view') {
+                context.push('${Routes.tenantProfile}/${tenant.tenancyId}');
+              } else if (val == 'pay') {
+                context.pushNamed('record-payment', pathParameters: {'tenancyId': tenant.tenancyId});
+              } else if (val == 'delete') {
+                _confirmDeleteTenantDirectory(context, tenant.tenancyId, tenant.name, onRefresh);
+              }
+            },
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(
+                value: 'view',
+                child: Row(
+                  children: [
+                    Icon(Icons.person_outline, size: 18),
+                    SizedBox(width: 8),
+                    Text('View profile'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'pay',
+                child: Row(
+                  children: [
+                    Icon(Icons.payments_outlined, size: 18, color: AppColors.action),
+                    SizedBox(width: 8),
+                    Text('Record payment'),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_outline_rounded, size: 18, color: AppColors.error),
+                    SizedBox(width: 8),
+                    Text('Delete tenant', style: TextStyle(color: AppColors.error)),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -539,4 +652,81 @@ class _TenantItem {
   });
 
   int get totalDuePaise => rentDuePaise + elecDuePaise;
+}
+
+Future<void> _confirmDeleteTenantDirectory(
+  BuildContext context,
+  String tenancyId,
+  String tenantName,
+  VoidCallback onDeleted,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, color: AppColors.error),
+          SizedBox(width: 8),
+          Text('Delete Tenant?'),
+        ],
+      ),
+      content: Text(
+        'Are you sure you want to permanently delete $tenantName?\n\n'
+        'This will remove all associated charges, meter readings, payments, and advance records.\n\n'
+        'This action cannot be undone.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Delete Permanently'),
+        ),
+      ],
+    ),
+  );
+
+  if (confirmed != true || !context.mounted) return;
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Row(
+        children: [
+          const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+          ),
+          const SizedBox(width: 12),
+          Text('Deleting $tenantName…'),
+        ],
+      ),
+      duration: const Duration(seconds: 15),
+    ),
+  );
+
+  try {
+    await TenancyService.deleteTenancy(tenancyId);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Tenant $tenantName deleted successfully.'),
+        backgroundColor: AppColors.success,
+      ),
+    );
+    onDeleted();
+  } catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Failed to delete tenant: $e'),
+        backgroundColor: AppColors.error,
+      ),
+    );
+  }
 }

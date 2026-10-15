@@ -19,6 +19,9 @@
     <!-- Vibration (haptic feedback) -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Push / local notifications (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:label="Rentify"
         android:name="${applicationName}"

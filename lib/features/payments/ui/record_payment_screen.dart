@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../../core/routing/routes.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
@@ -32,6 +35,9 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
   String? _errorMessage;
   DateTime _paymentDate = DateTime.now();
   bool _showAllocations = true;
+  String _tenantName = '';
+  String _unitId = '';
+  int _totalOutstandingPaise = 0;
 
   List<_PendingCharge> _charges = [];
   final Map<String, int> _allocations = {}; // chargeId → paise to allocate
@@ -46,17 +52,32 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
   Future<void> _loadCharges() async {
     try {
       final client = Supabase.instance.client;
+
+      // 1. Fetch tenancy details
+      final tenRes = await client
+          .from('tenancies')
+          .select('tenant_name, unit_id')
+          .eq('id', widget.tenancyId)
+          .maybeSingle();
+
+      if (tenRes != null) {
+        _tenantName = (tenRes['tenant_name'] as String?) ?? '';
+        _unitId = (tenRes['unit_id'] as String?) ?? '';
+      }
+
+      // 2. Fetch pending charges
       final res = await client
           .from('charges')
-          .select('id, charge_type, amount_paise, billing_period_start')
-          .eq('tenancy_id', widget.tenancyId);
+          .select('id, charge_type, amount_paise, billing_month, status')
+          .eq('tenancy_id', widget.tenancyId)
+          .neq('status', 'paid');
 
       if (!mounted) return;
       final rows = res as List<dynamic>;
       final list = rows.map((r) => _PendingCharge(
             id: r['id'] as String,
             label: (r['charge_type'] as String?) == 'electricity' ? 'Electricity' : 'Rent',
-            month: (r['billing_period_start'] as String?) ?? 'Current',
+            month: (r['billing_month'] as String?) ?? 'Current',
             amountPaise: (r['amount_paise'] as num?)?.toInt() ?? 0,
             outstandingPaise: (r['amount_paise'] as num?)?.toInt() ?? 0,
             type: (r['charge_type'] as String?) ?? 'rent',
@@ -64,11 +85,14 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
 
       setState(() {
         _charges = list;
+        _totalOutstandingPaise = list.fold(0, (sum, c) => sum + c.outstandingPaise);
         for (final c in list) {
           _allocations[c.id] = c.outstandingPaise;
         }
       });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Error loading charges: $e');
+    }
   }
 
   @override
@@ -121,15 +145,43 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
     try {
       final client = Supabase.instance.client;
       final userId = client.auth.currentUser?.id;
-      await client.from('payments').insert({
+      final paymentRow = await client.from('payments').insert({
         'tenancy_id': widget.tenancyId,
         'amount_paise': _paymentAmountPaise,
-        'payment_method': _method,
+        'method': _method,
         'payment_date': _paymentDate.toIso8601String().substring(0, 10),
         'reference': _referenceCtrl.text.trim().isEmpty ? null : _referenceCtrl.text.trim(),
         'notes': _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
-        if (userId != null) 'created_by': userId,
-      });
+        if (userId != null) 'recorded_by': userId,
+      }).select().single();
+
+      final paymentId = paymentRow['id'] as String;
+
+      // Insert allocations if any charges were allocated
+      final validAllocations = _allocations.entries
+          .where((e) => e.value > 0)
+          .toList();
+
+      if (validAllocations.isNotEmpty) {
+        final allocRows = validAllocations.map((e) => {
+          'payment_id': paymentId,
+          'charge_id': e.key,
+          'amount_paise': e.value,
+          if (userId != null) 'created_by': userId,
+        }).toList();
+
+        await client.from('payment_allocations').insert(allocRows);
+
+        // Update charge status if fully paid or partial
+        for (final entry in validAllocations) {
+          final chargeMatch = _charges.where((c) => c.id == entry.key);
+          if (chargeMatch.isNotEmpty) {
+            final charge = chargeMatch.first;
+            final newStatus = entry.value >= charge.outstandingPaise ? 'paid' : 'partial';
+            await client.from('charges').update({'status': newStatus}).eq('id', entry.key);
+          }
+        }
+      }
 
       if (!mounted) return;
       _showSuccessSheet();
@@ -171,7 +223,7 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
                     type: AppButtonType.primary,
                     onPressed: () {
                       Navigator.of(sheetCtx, rootNavigator: true).pop();
-                      if (mounted) Navigator.of(context).pop();
+                      if (mounted) _navigateBack();
                     },
                   ),
                 ),
@@ -183,6 +235,14 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
     );
   }
 
+  void _navigateBack() {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('${Routes.tenantProfile}/${widget.tenancyId}');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -191,7 +251,7 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
         title: Text('Record payment', style: AppTextStyles.h2),
         leading: IconButton(
           icon: const Icon(Icons.close_rounded),
-          onPressed: () => Navigator.pop(context),
+          onPressed: _navigateBack,
         ),
       ),
       body: Form(
@@ -211,9 +271,14 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
                 children: [
                   Text('Tenant', style: AppTextStyles.caption.copyWith(color: Colors.white54)),
                   const SizedBox(height: 4),
-                  Text('Priya Sharma', style: AppTextStyles.h3.copyWith(color: Colors.white)),
-                  Text('Room 07 · ₹6,85,000 total outstanding',
-                      style: AppTextStyles.caption.copyWith(color: Colors.white70)),
+                  Text(
+                    _tenantName.isNotEmpty ? _tenantName : 'Tenant',
+                    style: AppTextStyles.h3.copyWith(color: Colors.white),
+                  ),
+                  Text(
+                    '${_unitId.isNotEmpty ? '$_unitId · ' : ''}${CurrencyFormatter.fromPaise(_totalOutstandingPaise)} total outstanding',
+                    style: AppTextStyles.caption.copyWith(color: Colors.white70),
+                  ),
                 ],
               ),
             ),

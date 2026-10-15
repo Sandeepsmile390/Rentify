@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/currency_formatter.dart';
@@ -26,13 +28,146 @@ class _TenantLedgerScreenState extends ConsumerState<TenantLedgerScreen> {
   }
 
   Future<void> _load() async {
-    // TODO: load from Supabase — scoped by auth.uid() via RLS
-    await Future.delayed(const Duration(milliseconds: 600));
-    if (!mounted) return;
-    setState(() {
-      _isLoading = false;
-      _data = _TenantLedgerData.placeholder();
-    });
+    try {
+      final client = Supabase.instance.client;
+      final userId = client.auth.currentUser?.id;
+
+      if (userId == null) {
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+          _data = _TenantLedgerData.placeholder();
+        });
+        return;
+      }
+
+      final tenancy = await client
+          .from('tenancies')
+          .select('id, unit_id, tenant_name, profile_id')
+          .eq('profile_id', userId)
+          .maybeSingle();
+
+      if (tenancy == null) {
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+          _data = const _TenantLedgerData(
+            name: 'Tenant',
+            unitId: 'My Unit',
+            billingMonth: 'Current Month',
+            rentDuePaise: 0,
+            elecDuePaise: 0,
+            advanceBalancePaise: 0,
+            entries: [],
+          );
+        });
+        return;
+      }
+
+      final tId = tenancy['id'] as String;
+      final name = (tenancy['tenant_name'] as String?) ?? 'Tenant';
+      final unitId = (tenancy['unit_id'] as String?) ?? '';
+
+      // Fetch charges
+      final chargesRes = await client
+          .from('charges')
+          .select('id, charge_type, amount_paise, status, billing_month, created_at')
+          .eq('tenancy_id', tId)
+          .order('billing_month', ascending: false);
+
+      int rentDue = 0;
+      int elecDue = 0;
+      final List<_LedgerEntry> entries = [];
+
+      for (final c in (chargesRes as List<dynamic>)) {
+        final cType = (c['charge_type'] as String?) ?? 'rent';
+        final amt = (c['amount_paise'] as num?)?.toInt() ?? 0;
+        final status = (c['status'] as String?) ?? 'pending';
+        final month = (c['billing_month'] as String?) ?? '';
+
+        if (status != 'paid' && status != 'waived') {
+          if (cType == 'rent') rentDue += amt;
+          if (cType == 'electricity') elecDue += amt;
+        }
+
+        entries.add(_LedgerEntry(
+          type: 'charge',
+          subtype: cType,
+          label: cType == 'electricity' ? 'Electricity charge' : 'Rent charge',
+          date: month,
+          amountPaise: amt,
+          status: status,
+        ));
+      }
+
+      // Fetch payments
+      final paymentsRes = await client
+          .from('payments')
+          .select('amount_paise, payment_date, method, reference')
+          .eq('tenancy_id', tId)
+          .order('payment_date', ascending: false);
+
+      for (final p in (paymentsRes as List<dynamic>)) {
+        final amt = (p['amount_paise'] as num?)?.toInt() ?? 0;
+        final pDate = (p['payment_date'] as String?) ?? '';
+        final method = (p['method'] as String?) ?? 'cash';
+        final ref = p['reference'] as String?;
+
+        entries.add(_LedgerEntry(
+          type: 'payment',
+          label: 'Payment received',
+          date: pDate,
+          amountPaise: amt,
+          note: '$method${ref != null ? ' · $ref' : ''}',
+        ));
+      }
+
+      // Fetch advance balance
+      int advanceBalance = 0;
+      final advRes = await client
+          .from('tenant_advances')
+          .select('id')
+          .eq('tenancy_id', tId)
+          .maybeSingle();
+
+      if (advRes != null) {
+        final txnsRes = await client
+            .from('advance_transactions')
+            .select('amount_paise')
+            .eq('advance_id', advRes['id']);
+        for (final t in (txnsRes as List<dynamic>)) {
+          advanceBalance += ((t['amount_paise'] as num?)?.toInt() ?? 0);
+        }
+      }
+
+      final now = DateTime.now();
+      final monthNames = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+      ];
+      final currentBillingMonth = '${monthNames[now.month - 1]} ${now.year}';
+
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _data = _TenantLedgerData(
+          name: name,
+          unitId: unitId,
+          billingMonth: currentBillingMonth,
+          rentDuePaise: rentDue,
+          elecDuePaise: elecDue,
+          advanceBalancePaise: advanceBalance,
+          entries: entries,
+        );
+      });
+    } catch (e) {
+      debugPrint('Notice loading tenant ledger: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _data = _TenantLedgerData.placeholder();
+      });
+    }
   }
 
   @override

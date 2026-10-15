@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../core/services/notification_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
-import '../../../core/widgets/status_chip.dart';
 
 /// Notification center — for both admin (all notifications) and tenant (own)
 class NotificationCenterScreen extends ConsumerStatefulWidget {
@@ -27,18 +27,103 @@ class _NotificationCenterScreenState
   }
 
   Future<void> _load() async {
-    await Future.delayed(const Duration(milliseconds: 200));
-    if (!mounted) return;
-    setState(() {
-      _isLoading = false;
-      _items = [];
-    });
+    try {
+      final client = Supabase.instance.client;
+      final userId = client.auth.currentUser?.id;
+
+      var query = client.from('notifications').select('*');
+      if (userId != null) {
+        query = query.eq('recipient_id', userId);
+      }
+      final res = await query.order('created_at', ascending: false);
+
+      final rows = res as List<dynamic>;
+      final list = rows.map((r) {
+        final d = DateTime.tryParse((r['created_at'] as String?) ?? '') ?? DateTime.now();
+        final diff = DateTime.now().difference(d);
+        String timeAgo;
+        if (diff.inMinutes < 60) {
+          timeAgo = '${diff.inMinutes.clamp(1, 60)}m ago';
+        } else if (diff.inHours < 24) {
+          timeAgo = '${diff.inHours}h ago';
+        } else {
+          timeAgo = '${diff.inDays}d ago';
+        }
+
+        return _NotifItem(
+          id: (r['id'] as String?) ?? '',
+          category: (r['category'] as String?) ?? 'system',
+          title: (r['title'] as String?) ?? 'Notification',
+          body: (r['body'] as String?) ?? '',
+          timeAgo: timeAgo,
+          isRead: (r['is_read'] as bool?) ?? false,
+        );
+      }).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _items = list;
+      });
+    } catch (e) {
+      debugPrint('Notice loading notifications: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _items = [];
+      });
+    }
   }
 
-  void _markAllRead() {
+  Future<void> _sendTestAlert() async {
+    try {
+      final client = Supabase.instance.client;
+      final userId = client.auth.currentUser?.id;
+      if (userId == null) return;
+
+      await client.from('notifications').insert({
+        'recipient_id': userId,
+        'category': 'payment',
+        'title': 'Test Notification Alert',
+        'body': 'Popup notifications and alerts are successfully enabled in Rentify!',
+        'is_read': false,
+      });
+
+      // Request or verify permission
+      await NotificationService.requestPermission();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Test notification sent and permission active!'),
+          backgroundColor: AppColors.success,
+        ),
+      );
+      setState(() => _isLoading = true);
+      _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.error),
+      );
+    }
+  }
+
+  Future<void> _markAllRead() async {
     setState(() {
       _items = _items.map((n) => n.copyWith(isRead: true)).toList();
     });
+
+    try {
+      final client = Supabase.instance.client;
+      final userId = client.auth.currentUser?.id;
+      if (userId != null) {
+        await client
+            .from('notifications')
+            .update({'is_read': true})
+            .eq('recipient_id', userId);
+      }
+    } catch (_) {}
   }
 
   @override
@@ -68,6 +153,11 @@ class _NotificationCenterScreenState
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.notification_add_outlined),
+            tooltip: 'Send test alert',
+            onPressed: _sendTestAlert,
+          ),
           if (unread > 0)
             TextButton(
               onPressed: _markAllRead,

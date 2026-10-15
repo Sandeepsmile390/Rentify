@@ -24,6 +24,7 @@ class AppColors {
 
   /// Secondary text — dark grey
   static const Color inkLight = Color(0xFF374151);
+  static const Color inkSecondary = Color(0xFF374151);
 
   /// Tertiary / caption text
   static const Color inkMuted = Color(0xFF6B7280);

@@ -135,7 +135,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               ),
               GoRoute(
                 path: 'documents',
-                name: 'admin-documents',
+                name: 'documents',
                 pageBuilder: (context, state) => _slideTransition(
                   state,
                   DocumentsScreen(

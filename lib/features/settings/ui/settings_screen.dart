@@ -20,7 +20,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _biometricEnabled = true;
   bool _notificationsEnabled = true;
-  String _currency = 'INR';
+  final String _currency = 'INR';
   String _electricityRate = '9.00'; // ₹/unit
 
   @override
@@ -64,6 +64,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               title: 'Electricity rate',
               subtitle: '₹$_electricityRate per unit (currently active)',
               onTap: () => _showEditRateDialog(),
+            ),
+            _SettingsTile(
+              icon: Icons.currency_rupee_rounded,
+              title: 'Currency',
+              subtitle: '$_currency (Indian Rupee)',
+              onTap: null,
             ),
             _SettingsTile(
               icon: Icons.calendar_month_rounded,

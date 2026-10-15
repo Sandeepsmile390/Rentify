@@ -7,7 +7,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/routing/routes.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
-import '../../../core/utilities/currency_formatter.dart';
 import '../../../core/utilities/validators.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/app_text_field.dart';
@@ -99,15 +98,72 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
         if (userId != null) 'created_by': userId,
       }).select().single();
 
+      final tenancyId = tenancyRes['id'] as String;
+      final now = DateTime.now();
+      final currentBillingMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}-01';
+
+      // 1. Rent rate & initial charge
       final rentVal = double.tryParse(_rentCtrl.text.trim()) ?? 0;
       if (rentVal > 0) {
+        final rentPaise = (rentVal * 100).round();
         await client.from('rent_rates').insert({
-          'tenancy_id': tenancyRes['id'],
-          'amount_paise': (rentVal * 100).round(),
+          'tenancy_id': tenancyId,
+          'amount_paise': rentPaise,
           'effective_from': _startDate.toIso8601String().substring(0, 10),
           if (userId != null) 'created_by': userId,
         });
+
+        // Create initial pending rent charge for the start/current month
+        await client.from('charges').insert({
+          'tenancy_id': tenancyId,
+          'charge_type': 'rent',
+          'billing_month': currentBillingMonth,
+          'amount_paise': rentPaise,
+          'status': 'pending',
+          if (userId != null) 'created_by': userId,
+        });
       }
+
+      // 2. Electricity config
+      final fixedVal = double.tryParse(_fixedElecCtrl.text.trim()) ?? 0;
+      final initialReading = double.tryParse(_initialReadingCtrl.text.trim()) ?? 0.0;
+      final fixedPaise = (_elecMode == 'fixed' && fixedVal > 0) ? (fixedVal * 100).round() : null;
+
+      await client.from('electricity_config').insert({
+        'tenancy_id': tenancyId,
+        'mode': _elecMode,
+        if (fixedPaise != null) 'fixed_amount_paise': fixedPaise,
+        if (_elecMode == 'meter' && initialReading > 0) 'initial_reading': initialReading,
+        if (userId != null) 'created_by': userId,
+      });
+
+      // If fixed electricity, create initial charge
+      if (_elecMode == 'fixed' && fixedPaise != null) {
+        await client.from('charges').insert({
+          'tenancy_id': tenancyId,
+          'charge_type': 'electricity',
+          'billing_month': currentBillingMonth,
+          'amount_paise': fixedPaise,
+          'status': 'pending',
+          if (userId != null) 'created_by': userId,
+        });
+      } else if (_elecMode == 'meter' && initialReading > 0) {
+        // Initial baseline reading
+        await client.from('meter_readings').insert({
+          'tenancy_id': tenancyId,
+          'billing_month': currentBillingMonth,
+          'previous_reading': initialReading,
+          'current_reading': initialReading,
+          'rate_paise': 900,
+          'amount_paise': 0,
+          if (userId != null) 'created_by': userId,
+        });
+      }
+
+      // 3. Initialize tenant_advances record
+      await client.from('tenant_advances').insert({
+        'tenancy_id': tenancyId,
+      });
 
       if (!mounted) return;
       _showSuccessDialog();

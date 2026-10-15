@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/routing/routes.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/currency_formatter.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/status_chip.dart';
+import '../../tenants/services/tenancy_service.dart';
 
 /// Figma frame 09 — Tenant profile financial overview (admin view)
 class TenantProfileScreen extends ConsumerStatefulWidget {
@@ -38,13 +42,192 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
   }
 
   Future<void> _load() async {
-    // TODO: replace with real Supabase query
-    await Future.delayed(const Duration(milliseconds: 500));
-    if (!mounted) return;
-    setState(() {
-      _isLoading = false;
-      _data = _ProfileData.placeholder(widget.tenancyId);
-    });
+    try {
+      final client = Supabase.instance.client;
+
+      // 1. Tenancy
+      final tenancy = await client
+          .from('tenancies')
+          .select('id, profile_id, unit_id, tenant_type, tenant_name, mobile, start_date, is_active, notes')
+          .eq('id', widget.tenancyId)
+          .maybeSingle();
+
+      if (tenancy == null) {
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+          _data = _ProfileData.placeholder(widget.tenancyId);
+        });
+        return;
+      }
+
+      final name = (tenancy['tenant_name'] as String?) ?? 'Tenant';
+      final mobile = (tenancy['mobile'] as String?) ?? '';
+      final unitId = (tenancy['unit_id'] as String?) ?? '—';
+      final type = (tenancy['tenant_type'] as String?) == 'shop' ? 'Shop' : 'Room';
+      final startDate = (tenancy['start_date'] as String?) ?? '';
+      final isActive = (tenancy['is_active'] as bool?) ?? true;
+
+      // 2. Rent rate
+      int currentRentPaise = 0;
+      String rentEffectiveFrom = startDate;
+      final rentRes = await client
+          .from('rent_rates')
+          .select('amount_paise, effective_from')
+          .eq('tenancy_id', widget.tenancyId)
+          .order('effective_from', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      if (rentRes != null) {
+        currentRentPaise = (rentRes['amount_paise'] as num?)?.toInt() ?? 0;
+        rentEffectiveFrom = (rentRes['effective_from'] as String?) ?? startDate;
+      }
+
+      // 3. Electricity config
+      String elecMode = 'meter';
+      final elecRes = await client
+          .from('electricity_config')
+          .select('mode')
+          .eq('tenancy_id', widget.tenancyId)
+          .maybeSingle();
+      if (elecRes != null) {
+        elecMode = (elecRes['mode'] as String?) ?? 'meter';
+      }
+
+      // 4. Last meter reading
+      double lastMeter = 0.0;
+      final meterRes = await client
+          .from('meter_readings')
+          .select('current_reading')
+          .eq('tenancy_id', widget.tenancyId)
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      if (meterRes != null) {
+        lastMeter = (meterRes['current_reading'] as num?)?.toDouble() ?? 0.0;
+      }
+
+      // 5. Charges
+      final chargesRes = await client
+          .from('charges')
+          .select('id, charge_type, billing_month, amount_paise, status')
+          .eq('tenancy_id', widget.tenancyId)
+          .order('billing_month', ascending: false);
+
+      int rentDuePaise = 0;
+      int elecDuePaise = 0;
+      int currentElecPaise = 0;
+      final List<_ChargeItem> chargeItems = [];
+
+      for (final c in (chargesRes as List<dynamic>)) {
+        final cType = (c['charge_type'] as String?) ?? 'rent';
+        final amt = (c['amount_paise'] as num?)?.toInt() ?? 0;
+        final status = (c['status'] as String?) ?? 'pending';
+        final month = (c['billing_month'] as String?) ?? '';
+
+        if (status != 'paid' && status != 'waived') {
+          if (cType == 'rent') rentDuePaise += amt;
+          if (cType == 'electricity') elecDuePaise += amt;
+        }
+        if (cType == 'electricity' && currentElecPaise == 0) {
+          currentElecPaise = amt;
+        }
+
+        chargeItems.add(_ChargeItem(
+          label: cType == 'electricity' ? 'Electricity' : 'Rent',
+          month: month,
+          amountPaise: amt,
+          type: cType,
+          status: status,
+        ));
+      }
+
+      // 6. Payments
+      final paymentsRes = await client
+          .from('payments')
+          .select('amount_paise, payment_date, method, reference')
+          .eq('tenancy_id', widget.tenancyId)
+          .order('payment_date', ascending: false);
+
+      int paymentsThisMonthPaise = 0;
+      final now = DateTime.now();
+      final currentMonthPrefix = '${now.year}-${now.month.toString().padLeft(2, '0')}';
+      final List<_PaymentItem> paymentItems = [];
+
+      for (final p in (paymentsRes as List<dynamic>)) {
+        final amt = (p['amount_paise'] as num?)?.toInt() ?? 0;
+        final pDate = (p['payment_date'] as String?) ?? '';
+        final method = (p['method'] as String?) ?? 'cash';
+        final ref = p['reference'] as String?;
+
+        if (pDate.startsWith(currentMonthPrefix)) {
+          paymentsThisMonthPaise += amt;
+        }
+
+        paymentItems.add(_PaymentItem(
+          date: pDate,
+          amountPaise: amt,
+          method: method == 'online' ? 'Online' : 'Cash',
+          reference: ref,
+        ));
+      }
+
+      // 7. Advance balance
+      int advanceBalancePaise = 0;
+      final advRes = await client
+          .from('tenant_advances')
+          .select('id')
+          .eq('tenancy_id', widget.tenancyId)
+          .maybeSingle();
+
+      if (advRes != null) {
+        final txnsRes = await client
+            .from('advance_transactions')
+            .select('amount_paise')
+            .eq('advance_id', advRes['id']);
+        for (final t in (txnsRes as List<dynamic>)) {
+          advanceBalancePaise += ((t['amount_paise'] as num?)?.toInt() ?? 0);
+        }
+      }
+
+      final monthNames = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+      ];
+      final currentBillingMonth = '${monthNames[now.month - 1]} ${now.year}';
+
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _data = _ProfileData(
+          name: name,
+          mobile: mobile,
+          unitId: unitId,
+          type: type,
+          billingMonth: currentBillingMonth,
+          rentEffectiveFrom: rentEffectiveFrom,
+          startDate: startDate,
+          elecMode: elecMode,
+          isActive: isActive,
+          rentDuePaise: rentDuePaise,
+          elecDuePaise: elecDuePaise,
+          advanceBalancePaise: advanceBalancePaise,
+          currentRentPaise: currentRentPaise,
+          currentElecPaise: currentElecPaise,
+          paymentsThisMonthPaise: paymentsThisMonthPaise,
+          lastMeterReading: lastMeter,
+          charges: chargeItems,
+          payments: paymentItems,
+        );
+      });
+    } catch (e) {
+      debugPrint('Error loading tenant profile: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _data = _ProfileData.placeholder(widget.tenancyId);
+      });
+    }
   }
 
   @override
@@ -67,7 +250,7 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
                   _OverviewTab(data: _data!, tenancyId: widget.tenancyId),
                   _ChargesTab(data: _data!),
                   _PaymentsTab(data: _data!),
-                  _DetailsTab(data: _data!),
+                  _DetailsTab(data: _data!, tenancyId: widget.tenancyId),
                 ],
               ),
             ),
@@ -162,9 +345,15 @@ class _ProfileAppBar extends StatelessWidget {
         IconButton(
           icon: const Icon(Icons.electric_meter_outlined, color: Colors.white),
           tooltip: 'Enter meter reading',
-          onPressed: () => context.push(
-            context.namedLocation('meter-reading', pathParameters: {'tenancyId': tenancyId}),
+          onPressed: () => context.pushNamed(
+            'meter-reading',
+            pathParameters: {'tenancyId': tenancyId},
           ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.delete_outline_rounded, color: Colors.white70),
+          tooltip: 'Delete tenant',
+          onPressed: () => _confirmDeleteTenant(context, tenancyId, data.name),
         ),
         IconButton(
           icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
@@ -199,14 +388,29 @@ class _ProfileAppBar extends StatelessWidget {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.share_rounded),
+              leading: const Icon(Icons.share_rounded, color: Color(0xFF25D366)),
               title: const Text('Send WhatsApp dues summary'),
-              onTap: () => Navigator.of(sheetCtx, rootNavigator: true).pop(),
+              onTap: () {
+                Navigator.of(sheetCtx, rootNavigator: true).pop();
+                _sendWhatsAppDuesSummary(context, data);
+              },
             ),
             ListTile(
               leading: const Icon(Icons.folder_outlined),
               title: const Text('Documents'),
-              onTap: () => Navigator.of(sheetCtx, rootNavigator: true).pop(),
+              onTap: () {
+                Navigator.of(sheetCtx, rootNavigator: true).pop();
+                context.pushNamed('documents', pathParameters: {'tenancyId': tenancyId});
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.delete_forever_rounded, color: AppColors.error),
+              title: const Text('Delete tenant', style: TextStyle(color: AppColors.error, fontWeight: FontWeight.w600)),
+              onTap: () {
+                Navigator.of(sheetCtx, rootNavigator: true).pop();
+                _confirmDeleteTenant(context, tenancyId, data.name);
+              },
             ),
           ],
         ),
@@ -359,7 +563,10 @@ class _OverviewTab extends StatelessWidget {
                 label: 'Record payment',
                 type: AppButtonType.primary,
                 icon: Icons.payments_outlined,
-                onPressed: () {},
+                onPressed: () => context.pushNamed(
+                  'record-payment',
+                  pathParameters: {'tenancyId': tenancyId},
+                ),
               ),
             ),
             const SizedBox(width: 10),
@@ -368,7 +575,10 @@ class _OverviewTab extends StatelessWidget {
                 label: 'Meter reading',
                 type: AppButtonType.outlined,
                 icon: Icons.electric_meter_outlined,
-                onPressed: () {},
+                onPressed: () => context.pushNamed(
+                  'meter-reading',
+                  pathParameters: {'tenancyId': tenancyId},
+                ),
               ),
             ),
           ],
@@ -394,7 +604,7 @@ class _OverviewTab extends StatelessWidget {
           title: 'Rent',
           child: Column(
             children: [
-              _InfoRow('Current rate', CurrencyFormatter.fromPaise(data.currentRentPaise) + '/month'),
+              _InfoRow('Current rate', '${CurrencyFormatter.fromPaise(data.currentRentPaise)}/month'),
               _InfoRow('Effective from', data.rentEffectiveFrom),
             ],
           ),
@@ -596,8 +806,9 @@ class _PaymentsTab extends StatelessWidget {
 // ── Details tab ───────────────────────────────────────────────────
 
 class _DetailsTab extends StatelessWidget {
-  const _DetailsTab({required this.data});
+  const _DetailsTab({required this.data, required this.tenancyId});
   final _ProfileData data;
+  final String tenancyId;
 
   @override
   Widget build(BuildContext context) {
@@ -623,6 +834,31 @@ class _DetailsTab extends StatelessWidget {
               _InfoRow('Name', data.name),
               _InfoRow('Mobile', data.mobile),
               if (data.email != null) _InfoRow('Email', data.email!),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _SectionCard(
+          title: 'Danger zone',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Permanently remove this tenant and delete all their associated charges, payments, and meter readings.',
+                style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.error,
+                  side: const BorderSide(color: AppColors.error),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                icon: const Icon(Icons.delete_forever_rounded, size: 20),
+                label: const Text('Delete this tenant', style: TextStyle(fontWeight: FontWeight.w600)),
+                onPressed: () => _confirmDeleteTenant(context, tenancyId, data.name),
+              ),
             ],
           ),
         ),
@@ -686,3 +922,119 @@ class _PaymentItem {
   final int amountPaise;
   const _PaymentItem({required this.date, required this.amountPaise, required this.method, required this.reference});
 }
+
+Future<void> _confirmDeleteTenant(BuildContext context, String tenancyId, String tenantName) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, color: AppColors.error),
+          SizedBox(width: 8),
+          Text('Delete Tenant?'),
+        ],
+      ),
+      content: Text(
+        'Are you sure you want to permanently delete $tenantName?\n\n'
+        'This will remove all associated charges, meter readings, payments, and advance records.\n\n'
+        'This action cannot be undone.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Delete Permanently'),
+        ),
+      ],
+    ),
+  );
+
+  if (confirmed != true || !context.mounted) return;
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Row(
+        children: [
+          const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+          ),
+          const SizedBox(width: 12),
+          Text('Deleting $tenantName…'),
+        ],
+      ),
+      duration: const Duration(seconds: 15),
+    ),
+  );
+
+  try {
+    await TenancyService.deleteTenancy(tenancyId);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Tenant $tenantName deleted successfully.'),
+        backgroundColor: AppColors.success,
+      ),
+    );
+    context.go(Routes.tenantDirectory);
+  } catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Failed to delete tenant: $e'),
+        backgroundColor: AppColors.error,
+      ),
+    );
+  }
+}
+
+Future<void> _sendWhatsAppDuesSummary(BuildContext context, _ProfileData data) async {
+  final message = StringBuffer();
+  message.writeln('📋 *Rentify Payment Notice*');
+  message.writeln('Dear ${data.name},');
+  message.writeln('Here is your dues summary for *${data.unitId}*:');
+  message.writeln('');
+  message.writeln('• *Rent Due:* ${CurrencyFormatter.fromPaise(data.rentDuePaise)}');
+  message.writeln('• *Electricity Due:* ${CurrencyFormatter.fromPaise(data.elecDuePaise)}');
+  if (data.advanceBalancePaise > 0) {
+    message.writeln('• *Advance / Deposit Balance:* ${CurrencyFormatter.fromPaise(data.advanceBalancePaise)}');
+  }
+  message.writeln('━━━━━━━━━━━━━━━━━');
+  message.writeln('👉 *Total Outstanding: ${CurrencyFormatter.fromPaise(data.totalDuePaise)}*');
+  message.writeln('');
+  message.writeln('Please clear the pending balance at your earliest convenience. Thank you!');
+
+  final cleanMobile = data.mobile.replaceAll(RegExp(r'\D'), '');
+  final phone = cleanMobile.length == 10 ? '91$cleanMobile' : cleanMobile;
+  final encodedMsg = Uri.encodeComponent(message.toString());
+
+  final uri = Uri.parse(
+    phone.isNotEmpty
+        ? 'https://wa.me/$phone?text=$encodedMsg'
+        : 'https://wa.me/?text=$encodedMsg',
+  );
+
+  try {
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched) {
+      await launchUrl(uri, mode: LaunchMode.platformDefault);
+    }
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not open WhatsApp: $e'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    }
+  }
+}
+

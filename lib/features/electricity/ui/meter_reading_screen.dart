@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../../core/routing/routes.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
@@ -96,7 +99,7 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
       final now = DateTime.now();
       final billingMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}-01';
 
-      await client.from('meter_readings').insert({
+      final readingRow = await client.from('meter_readings').insert({
         'tenancy_id': widget.tenancyId,
         'billing_month': billingMonth,
         'previous_reading': _previousReading,
@@ -105,7 +108,21 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
         'amount_paise': _chargeAmountPaise,
         'notes': _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
         if (userId != null) 'created_by': userId,
-      });
+      }).select().single();
+
+      final readingId = readingRow['id'] as String?;
+
+      if (_chargeAmountPaise > 0) {
+        await client.from('charges').upsert({
+          'tenancy_id': widget.tenancyId,
+          'charge_type': 'electricity',
+          'billing_month': billingMonth,
+          'amount_paise': _chargeAmountPaise,
+          'status': 'pending',
+          if (readingId != null) 'meter_reading_id': readingId,
+          if (userId != null) 'created_by': userId,
+        }, onConflict: 'tenancy_id,charge_type,billing_month');
+      }
 
       if (!mounted) return;
       _showSuccessSheet();
@@ -144,7 +161,7 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
                 label: 'Done',
                 onPressed: () {
                   Navigator.of(sheetCtx, rootNavigator: true).pop();
-                  if (mounted) Navigator.of(context).pop();
+                  if (mounted) _navigateBack();
                 },
               ),
             ],
@@ -152,6 +169,14 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
         ),
       ),
     );
+  }
+
+  void _navigateBack() {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('${Routes.tenantProfile}/${widget.tenancyId}');
+    }
   }
 
   @override
@@ -162,7 +187,7 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
         title: Text('Meter reading', style: AppTextStyles.h2),
         leading: IconButton(
           icon: const Icon(Icons.close_rounded),
-          onPressed: () => Navigator.pop(context),
+          onPressed: _navigateBack,
         ),
       ),
       body: Form(
