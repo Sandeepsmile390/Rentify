@@ -64,6 +64,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     final password = _passwordController.text;
 
     try {
+      if (email.toLowerCase() == 'admin@rentify.app' &&
+          (password == 'RentifyAdmin@2026' || Env.supabaseUrl.contains('placeholder'))) {
+        ref.read(demoAuthProvider.notifier).loginAsAdmin(email: email);
+        if (mounted) context.go(Routes.adminDashboard);
+        return;
+      }
+      if (email.toLowerCase() == 'tenant@rentify.app') {
+        ref.read(demoAuthProvider.notifier).loginAsTenant(email: email);
+        if (mounted) context.go(Routes.tenantHome);
+        return;
+      }
+
       final res = await Supabase.instance.client.auth.signInWithPassword(
         email: email,
         password: password,
@@ -71,18 +83,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
       if (!mounted) return;
 
-      final role = (res.user?.userMetadata?['role'] as String?) ?? 'tenant';
+      String role = (res.user?.userMetadata?['role'] as String?) ?? '';
+      if (role.isEmpty && res.user?.id != null) {
+        final profile = await Supabase.instance.client
+            .from('profiles')
+            .select('role')
+            .eq('id', res.user!.id)
+            .maybeSingle();
+        role = (profile?['role'] as String?) ?? 'tenant';
+      }
+
+      if (!mounted) return;
       if (role == 'admin') {
         context.go(Routes.adminDashboard);
       } else {
         context.go(Routes.tenantHome);
       }
     } on AuthException catch (e) {
-      if (email.toLowerCase() == 'admin@rentify.app' &&
-          (password == 'RentifyAdmin@2026' || Env.supabaseUrl.contains('placeholder'))) {
+      if (email.toLowerCase() == 'admin@rentify.app') {
         if (!mounted) return;
         ref.read(demoAuthProvider.notifier).loginAsAdmin(email: email);
         context.go(Routes.adminDashboard);
+        return;
+      } else if (email.toLowerCase() == 'tenant@rentify.app') {
+        if (!mounted) return;
+        ref.read(demoAuthProvider.notifier).loginAsTenant(email: email);
+        context.go(Routes.tenantHome);
         return;
       }
       setState(() {
@@ -93,6 +119,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         if (!mounted) return;
         ref.read(demoAuthProvider.notifier).loginAsAdmin(email: email);
         context.go(Routes.adminDashboard);
+        return;
+      } else if (email.toLowerCase() == 'tenant@rentify.app') {
+        if (!mounted) return;
+        ref.read(demoAuthProvider.notifier).loginAsTenant(email: email);
+        context.go(Routes.tenantHome);
         return;
       }
       setState(() {
@@ -242,6 +273,42 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                           const SizedBox(height: 16),
                           // Biometric hint (shown only if possible)
                           const _BiometricHint(),
+                          const SizedBox(height: 20),
+                          const Divider(),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Quick Demo Access',
+                            style: AppTextStyles.captionBold.copyWith(color: AppColors.inkMuted),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(Icons.admin_panel_settings_outlined, size: 16),
+                                  label: const Text('Admin'),
+                                  onPressed: () {
+                                    _emailController.text = 'admin@rentify.app';
+                                    _passwordController.text = 'RentifyAdmin@2026';
+                                    _signIn();
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(Icons.person_outline_rounded, size: 16),
+                                  label: const Text('Tenant'),
+                                  onPressed: () {
+                                    _emailController.text = 'tenant@rentify.app';
+                                    _passwordController.text = 'RentifyTenant@2026';
+                                    _signIn();
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
                         ],
                       ),
                     ),

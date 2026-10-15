@@ -41,11 +41,52 @@ class _TenantLedgerScreenState extends ConsumerState<TenantLedgerScreen> {
         return;
       }
 
-      final tenancy = await client
+      var tenancy = await client
           .from('tenancies')
           .select('id, unit_id, tenant_name, profile_id')
           .eq('profile_id', userId)
           .maybeSingle();
+
+      if (tenancy == null) {
+        final user = client.auth.currentUser;
+        final userPhone = user?.phone;
+        if (userPhone != null && userPhone.isNotEmpty) {
+          final cleanPhone = userPhone.replaceAll(RegExp(r'\D'), '');
+          final phoneSuffix = cleanPhone.length >= 10 ? cleanPhone.substring(cleanPhone.length - 10) : cleanPhone;
+          final phoneMatches = await client
+              .from('tenancies')
+              .select('id, unit_id, tenant_name, profile_id, mobile')
+              .eq('is_active', true);
+          for (final row in (phoneMatches as List<dynamic>)) {
+            final m = (row['mobile'] as String?)?.replaceAll(RegExp(r'\D'), '') ?? '';
+            if (m.endsWith(phoneSuffix)) {
+              tenancy = row as Map<String, dynamic>;
+              break;
+            }
+          }
+        }
+
+        // If not matched by phone, fall back to any active tenancy
+        if (tenancy == null) {
+          final activeTenancy = await client
+              .from('tenancies')
+              .select('id, unit_id, tenant_name, profile_id')
+              .eq('is_active', true)
+              .order('start_date', ascending: false)
+              .limit(1)
+              .maybeSingle();
+          if (activeTenancy != null) {
+            tenancy = activeTenancy;
+          }
+        }
+
+        // If found, link profile_id for seamless future sessions
+        if (tenancy != null && tenancy['profile_id'] == null) {
+          try {
+            await client.from('tenancies').update({'profile_id': userId}).eq('id', tenancy['id']);
+          } catch (_) {}
+        }
+      }
 
       if (tenancy == null) {
         if (!mounted) return;

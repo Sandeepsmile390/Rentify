@@ -15,6 +15,8 @@ build/*
 # Android
 .gradle/
 android/.gradle/
+android/build/
+android/app/build/
 local.properties
 android/local.properties
 *.keystore

@@ -1,0 +1,31 @@
+name: Keep Supabase Backend Alive
+
+on:
+  schedule:
+    # Runs daily at 00:00 UTC (05:30 AM IST)
+    - cron: '0 0 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase Database
+        run: |
+          echo "Sending keep-alive heartbeat to Supabase..."
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            "https://hxzuxainrstkobczijdu.supabase.co/rest/v1/health_pings" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh4enV4YWlucnN0a29iY3ppamR1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM1NzgwNTgsImV4cCI6MjA1OTE1NDA1OH0.3z7t71z6nC-kHsmC3G27ZqGj3y8aQ9R3b7V0x6F5e2o' }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh4enV4YWlucnN0a29iY3ppamR1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM1NzgwNTgsImV4cCI6MjA1OTE1NDA1OH0.3z7t71z6nC-kHsmC3G27ZqGj3y8aQ9R3b7V0x6F5e2o' }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            -d '{"ping_source": "github_actions_cron"}')
+          
+          echo "HTTP Status Code: $RESPONSE"
+          if [ "$RESPONSE" -ge 200 ] && [ "$RESPONSE" -lt 300 ]; then
+            echo "✅ Supabase ping successful! Database is kept alive."
+          else
+            echo "⚠️ Non-2xx response ($RESPONSE), querying REST root..."
+            curl -f "https://hxzuxainrstkobczijdu.supabase.co/rest/v1/" \
+              -H "apikey: ${{ secrets.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh4enV4YWlucnN0a29iY3ppamR1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM1NzgwNTgsImV4cCI6MjA1OTE1NDA1OH0.3z7t71z6nC-kHsmC3G27ZqGj3y8aQ9R3b7V0x6F5e2o' }}"
+          fi
