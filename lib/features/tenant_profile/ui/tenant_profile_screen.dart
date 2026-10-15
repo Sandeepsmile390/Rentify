@@ -406,6 +406,15 @@ class _ProfileAppBar extends StatelessWidget {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.password_rounded, color: AppColors.action),
+              title: const Text('Set / Reset tenant password'),
+              subtitle: const Text('Configure portal password for this resident'),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                _showSetPasswordDialog(context, tenancyId, data.name, data.mobile);
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.folder_outlined),
               title: const Text('Documents'),
               onTap: () {
@@ -941,13 +950,13 @@ Future<void> _confirmDeleteTenant(BuildContext context, String tenancyId, String
         children: [
           Icon(Icons.warning_amber_rounded, color: AppColors.error),
           SizedBox(width: 8),
-          Text('Delete Tenant?'),
+          Text('Delete from Database?'),
         ],
       ),
       content: Text(
-        'Are you sure you want to remove or deactivate $tenantName?\n\n'
-        '• If financial history exists (charges, payments, or advances), the tenancy will be archived to preserve ledger and accounting integrity.\n'
-        '• If no financial records exist, it will be removed cleanly.',
+        'Are you sure you want to permanently delete $tenantName from the database?\n\n'
+        'This will permanently delete the tenancy and all related records (charges, payments, meter readings, and advance ledgers) from the database.\n\n'
+        'This action cannot be undone.',
       ),
       actions: [
         TextButton(
@@ -957,7 +966,7 @@ Future<void> _confirmDeleteTenant(BuildContext context, String tenancyId, String
         FilledButton(
           style: FilledButton.styleFrom(backgroundColor: AppColors.error),
           onPressed: () => Navigator.pop(ctx, true),
-          child: const Text('Confirm'),
+          child: const Text('Delete Permanently'),
         ),
       ],
     ),
@@ -975,7 +984,7 @@ Future<void> _confirmDeleteTenant(BuildContext context, String tenancyId, String
             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
           ),
           const SizedBox(width: 12),
-          Text('Processing $tenantName…'),
+          Text('Deleting $tenantName from database…'),
         ],
       ),
       duration: const Duration(seconds: 15),
@@ -983,15 +992,12 @@ Future<void> _confirmDeleteTenant(BuildContext context, String tenancyId, String
   );
 
   try {
-    final outcome = await TenancyService.deleteOrDeactivateTenancy(tenancyId);
+    await TenancyService.deleteTenancyPermanently(tenancyId);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    final msg = outcome == TenancyActionOutcome.deactivated
-        ? 'Tenant $tenantName was safely archived (financial records preserved).'
-        : 'Tenant $tenantName deleted cleanly.';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(msg),
+        content: Text('Tenant $tenantName deleted from database successfully.'),
         backgroundColor: AppColors.success,
       ),
     );
@@ -1001,11 +1007,97 @@ Future<void> _confirmDeleteTenant(BuildContext context, String tenancyId, String
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Failed to process tenant: $e'),
+        content: Text('Failed to delete tenant: $e'),
         backgroundColor: AppColors.error,
       ),
     );
   }
+}
+
+Future<void> _showSetPasswordDialog(
+  BuildContext context,
+  String tenancyId,
+  String tenantName,
+  String mobile,
+) async {
+  final cleanMobile = mobile.replaceAll(RegExp(r'\D'), '');
+  final defaultPass = cleanMobile.length >= 6 ? cleanMobile : 'RentifyTenant@2026';
+  final passController = TextEditingController(text: defaultPass);
+  final formKey = GlobalKey<FormState>();
+
+  await showDialog(
+    context: context,
+    builder: (dCtx) => AlertDialog(
+      title: Text('Set Password for $tenantName'),
+      content: Form(
+        key: formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Set login password for $tenantName. By default, tenant User ID = mobile number ($mobile) and password = mobile number ($mobile).',
+              style: AppTextStyles.caption,
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: passController,
+              decoration: InputDecoration(
+                labelText: 'Password',
+                prefixIcon: const Icon(Icons.lock_outline_rounded),
+                helperText: 'Default: tenant mobile number ($cleanMobile)',
+              ),
+              validator: (v) {
+                if (v == null || v.trim().length < 8) {
+                  return 'Password must be at least 8 characters';
+                }
+                return null;
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dCtx),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () async {
+            if (!(formKey.currentState?.validate() ?? false)) return;
+            Navigator.pop(dCtx);
+
+            try {
+              final client = Supabase.instance.client;
+              await client.rpc('admin_set_tenant_password', params: {
+                'p_tenancy_id': tenancyId,
+                'p_new_password': passController.text.trim(),
+              });
+
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Password set for $tenantName! They can now log in.'),
+                    backgroundColor: AppColors.success,
+                  ),
+                );
+              }
+            } catch (e) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Failed to set password: $e'),
+                    backgroundColor: AppColors.error,
+                  ),
+                );
+              }
+            }
+          },
+          child: const Text('Save Password'),
+        ),
+      ],
+    ),
+  );
 }
 
 Future<void> _sendWhatsAppDuesSummary(BuildContext context, _ProfileData data) async {
@@ -1064,10 +1156,14 @@ Future<void> _shareTenantLoginDetails(BuildContext context, _ProfileData data) a
   message.writeln('📱 You can view your monthly rent dues, electricity meter readings, advance deposit balance, and payment receipts anytime on our portal:');
   message.writeln('👉 https://rentify-sandy-delta.vercel.app');
   message.writeln('');
-  message.writeln('🔐 *How to Login:*');
-  message.writeln('1. Open the portal link or download the Rentify App');
-  message.writeln('2. Enter your registered mobile: *${data.mobile}*');
-  message.writeln('3. Access your private tenant dashboard securely!');
+  message.writeln('🔐 *Your Login Credentials:*');
+  message.writeln('• *User ID / Mobile:* ${data.mobile}');
+  message.writeln('• *Password:* ${data.mobile}');
+  message.writeln('');
+  message.writeln('1. Open the portal link or open the Rentify App');
+  message.writeln('2. Enter your registered mobile as User ID');
+  message.writeln('3. Enter your mobile number as Password');
+  message.writeln('4. Access your private tenant dashboard securely!');
   message.writeln('');
   message.writeln('Thank you!');
 

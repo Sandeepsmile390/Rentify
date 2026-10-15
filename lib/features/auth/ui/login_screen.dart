@@ -62,13 +62,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     });
 
     final identifier = _emailController.text.trim();
-    final password = _passwordController.text;
+    final idLower = identifier.toLowerCase();
     final cleanDigits = identifier.replaceAll(RegExp(r'\D'), '');
+    var password = _passwordController.text;
 
     String loginEmail = identifier;
 
-    // 1. Mobile Number Login for Tenants: Lookup account email securely
-    if (cleanDigits.length >= 10 && !identifier.contains('@')) {
+    // 1. Admin ID: sandeepsmile390 or admin@rentify.app
+    if (idLower == 'sandeepsmile390' || idLower == 'admin@rentify.app') {
+      loginEmail = 'sandeepsmile390@rentify.app';
+    } else if (cleanDigits.length >= 10 && !identifier.contains('@')) {
+      // 2. Tenant Mobile Number Login: Lookup account email securely
+      // If identifier is a 10-digit mobile number and password is blank, auto-default password to the mobile number
+      if (password.isEmpty) {
+        password = cleanDigits;
+        _passwordController.text = cleanDigits;
+      }
+
       try {
         final client = Supabase.instance.client;
         final res = await client.rpc(
@@ -231,18 +241,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                             const SizedBox(height: 16),
                           ],
 
-                          // Email or Mobile
+                          // User ID / Mobile / Email
                           AppTextField(
-                            label: 'Email or Tenant Mobile Number',
-                            hint: 'admin@rentify.app or 9876543210',
+                            label: 'User ID, Mobile Number or Email',
+                            hint: 'sandeepsmile390 or 10-digit mobile',
                             controller: _emailController,
                             keyboardType: TextInputType.emailAddress,
                             textInputAction: TextInputAction.next,
-                            autofillHints: const [AutofillHints.email, AutofillHints.telephoneNumber],
+                            autofillHints: const [AutofillHints.username, AutofillHints.telephoneNumber, AutofillHints.email],
                             prefixIcon: Icons.person_outline_rounded,
                             validator: (v) {
                               final val = (v ?? '').trim();
-                              if (val.isEmpty) return 'Please enter your email or 10-digit mobile';
+                              if (val.isEmpty) return 'Please enter your User ID, mobile number or email';
+                              if (val.toLowerCase() == 'sandeepsmile390') return null;
                               final digits = val.replaceAll(RegExp(r'\D'), '');
                               if (digits.length >= 10 && !val.contains('@')) return null;
                               return Validators.email(val);
@@ -260,7 +271,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                             autofillHints: const [AutofillHints.password],
                             prefixIcon: Icons.lock_outline_rounded,
                             onSubmitted: (_) => _signIn(),
-                            validator: Validators.password,
+                            validator: (v) {
+                              final idVal = _emailController.text.trim().toLowerCase();
+                              if (idVal == 'sandeepsmile390') {
+                                if (v == null || v.isEmpty) return 'Password is required';
+                                return null;
+                              }
+                              final digits = idVal.replaceAll(RegExp(r'\D'), '');
+                              // If tenant enters mobile number, password defaults to mobile number if empty
+                              if (digits.length >= 10 && !idVal.contains('@') && (v == null || v.isEmpty)) {
+                                return null;
+                              }
+                              return Validators.password(v);
+                            },
                             suffixIcon: IconButton(
                               icon: Icon(
                                 _obscurePassword
@@ -305,42 +328,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                           const SizedBox(height: 16),
                           // Biometric hint (shown only if possible)
                           const _BiometricHint(),
-                          const SizedBox(height: 20),
-                          const Divider(),
-                          const SizedBox(height: 12),
-                          Text(
-                            'Quick Demo Access',
-                            style: AppTextStyles.captionBold.copyWith(color: AppColors.inkMuted),
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  icon: const Icon(Icons.admin_panel_settings_outlined, size: 16),
-                                  label: const Text('Admin'),
-                                  onPressed: () {
-                                    _emailController.text = 'admin@rentify.app';
-                                    _passwordController.text = 'RentifyAdmin@2026';
-                                    _signIn();
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  icon: const Icon(Icons.person_outline_rounded, size: 16),
-                                  label: const Text('Tenant'),
-                                  onPressed: () {
-                                    _emailController.text = 'tenant@rentify.app';
-                                    _passwordController.text = 'RentifyTenant@2026';
-                                    _signIn();
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
                         ],
                       ),
                     ),

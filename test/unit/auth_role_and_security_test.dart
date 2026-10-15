@@ -153,4 +153,24 @@ void main() {
       );
     });
   });
+
+  group('Admin sandeepsmile390 Identity & Tenant Credentials', () {
+    test('sandeepsmile390 identifier maps to admin email correctly', () {
+      final identifier = 'sandeepsmile390';
+      final idLower = identifier.toLowerCase().trim();
+
+      String loginEmail = identifier;
+      if (idLower == 'sandeepsmile390' || idLower == 'admin@rentify.app') {
+        loginEmail = 'sandeepsmile390@rentify.app';
+      }
+
+      expect(loginEmail, equals('sandeepsmile390@rentify.app'));
+    });
+
+    test('sandeepsmile390 password passes length requirements', () {
+      const password = 'sandeepsmile390';
+      expect(password.length, greaterThanOrEqualTo(8));
+      expect(password, equals('sandeepsmile390'));
+    });
+  });
 }

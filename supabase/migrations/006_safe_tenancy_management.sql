@@ -49,3 +49,91 @@ comment on function public.get_tenant_login_email(text) is 'Resolves a tenant 10
 
 grant execute on function public.get_tenant_login_email(text) to anon, authenticated;
 grant execute on function public.is_admin() to anon, authenticated;
+
+-- 3. Admin function to create or reset tenant password directly
+create or replace function public.admin_set_tenant_password(
+  p_tenancy_id uuid,
+  p_new_password text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+DECLARE
+  v_profile_id uuid;
+  v_tenant_name text;
+  v_mobile text;
+  v_email text;
+  v_clean_mobile text;
+BEGIN
+  IF NOT public.is_admin() THEN
+    RAISE EXCEPTION 'Only administrators can set tenant passwords';
+  END IF;
+
+  IF length(p_new_password) < 8 THEN
+    RAISE EXCEPTION 'Password must be at least 8 characters';
+  END IF;
+
+  SELECT profile_id, tenant_name, mobile
+  INTO v_profile_id, v_tenant_name, v_mobile
+  FROM public.tenancies
+  WHERE id = p_tenancy_id;
+
+  IF v_tenant_name IS NULL THEN
+    RAISE EXCEPTION 'Tenancy not found';
+  END IF;
+
+  v_clean_mobile := regexp_replace(coalesce(v_mobile, ''), '\D', '', 'g');
+  IF length(v_clean_mobile) >= 10 THEN
+    v_clean_mobile := right(v_clean_mobile, 10);
+  END IF;
+
+  IF v_profile_id IS NOT NULL AND EXISTS (SELECT 1 FROM auth.users WHERE id = v_profile_id) THEN
+    UPDATE auth.users
+    SET encrypted_password = crypt(p_new_password, gen_salt('bf')),
+        updated_at = now()
+    WHERE id = v_profile_id;
+
+    RETURN jsonb_build_object('success', true, 'action', 'updated');
+  ELSE
+    v_profile_id := gen_random_uuid();
+    v_email := coalesce(nullif(v_clean_mobile, ''), gen_random_uuid()::text) || '@tenant.rentify.app';
+
+    INSERT INTO auth.users (
+      id, instance_id, aud, role, email, encrypted_password,
+      email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
+      is_sso_user, is_anonymous, created_at, updated_at
+    ) VALUES (
+      v_profile_id,
+      '00000000-0000-0000-0000-000000000000',
+      'authenticated',
+      'authenticated',
+      v_email,
+      crypt(p_new_password, gen_salt('bf')),
+      now(),
+      '{"provider": "email", "providers": ["email"]}'::jsonb,
+      jsonb_build_object('role', 'tenant', 'full_name', v_tenant_name),
+      false,
+      false,
+      now(),
+      now()
+    );
+
+    INSERT INTO public.profiles (
+      id, role, full_name, mobile, created_at, updated_at
+    ) VALUES (
+      v_profile_id, 'tenant', v_tenant_name, v_mobile, now(), now()
+    ) ON CONFLICT (id) DO UPDATE
+    SET full_name = EXCLUDED.full_name, mobile = EXCLUDED.mobile;
+
+    UPDATE public.tenancies
+    SET profile_id = v_profile_id
+    WHERE id = p_tenancy_id;
+
+    RETURN jsonb_build_object('success', true, 'action', 'created', 'email', v_email);
+  END IF;
+END;
+$$;
+
+grant execute on function public.admin_set_tenant_password(uuid, text) to authenticated;

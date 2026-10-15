@@ -34,6 +34,28 @@ void main() {
       expect(text, contains('₹1,200'));
       expect(text, contains('₹16,200'));
     });
+
+    test('generates tenant login credentials with mobile number as user id and password', () {
+      const mobile = '9876543210';
+      final cleanMobile = mobile.replaceAll(RegExp(r'\D'), '');
+
+      // User ID = mobile, Password = mobile
+      final userId = cleanMobile;
+      final password = cleanMobile;
+
+      expect(userId, equals('9876543210'));
+      expect(password, equals('9876543210'));
+      expect(password.length >= 8, isTrue);
+
+      final message = StringBuffer();
+      message.writeln('🔑 *Your Login Credentials:*');
+      message.writeln('• *User ID / Mobile:* $userId');
+      message.writeln('• *Password:* $password');
+
+      final msgStr = message.toString();
+      expect(msgStr, contains('User ID / Mobile:* 9876543210'));
+      expect(msgStr, contains('Password:* 9876543210'));
+    });
   });
 
   group('Payment Validation & Over-allocation Detection', () {

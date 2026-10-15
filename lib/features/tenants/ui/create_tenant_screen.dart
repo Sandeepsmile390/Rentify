@@ -165,6 +165,19 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
         'tenancy_id': tenancyId,
       });
 
+      // 4. Auto-provision tenant auth account (User ID = mobile, Password = mobile)
+      final cleanMobile = _mobileCtrl.text.replaceAll(RegExp(r'\D'), '');
+      if (cleanMobile.length >= 10) {
+        try {
+          await client.rpc('admin_set_tenant_password', params: {
+            'p_tenancy_id': tenancyId,
+            'p_new_password': cleanMobile,
+          });
+        } catch (e) {
+          debugPrint('Notice: Auto-provisioning tenant login: $e');
+        }
+      }
+
       if (!mounted) return;
       _showSuccessDialog();
     } catch (e) {
@@ -175,6 +188,7 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
   }
 
   void _showSuccessDialog() {
+    final mob = _mobileCtrl.text.trim();
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -190,7 +204,12 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
         ),
         title: Text('Tenant added!', style: AppTextStyles.h2),
         content: Text(
-          '${_nameCtrl.text.trim()} has been added to ${_unitCtrl.text.trim()}.',
+          mob.isNotEmpty
+              ? '${_nameCtrl.text.trim()} has been added to ${_unitCtrl.text.trim()}.\n\n'
+                  '🔑 Tenant Login Details:\n'
+                  '• User ID: $mob\n'
+                  '• Password: $mob'
+              : '${_nameCtrl.text.trim()} has been added to ${_unitCtrl.text.trim()}.',
           style: AppTextStyles.bodyRegular,
         ),
         actions: [

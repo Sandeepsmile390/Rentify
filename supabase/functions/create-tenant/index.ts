@@ -78,15 +78,18 @@ Deno.serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    // ── Create auth user if email provided ──────────────────────
+    // ── Create auth user if email or mobile provided ───────────
     let newUserId: string | null = null;
-    if (body.email) {
-      const tempPassword = crypto.randomUUID().slice(0, 16) + 'Aa1!'; // temp password
+    const cleanMob = (body.mobile || '').replace(/\D/g, '');
+    const accountEmail = body.email || (cleanMob.length >= 10 ? `${cleanMob}@tenant.rentify.app` : null);
+
+    if (accountEmail) {
+      const defaultPassword = cleanMob.length >= 6 ? cleanMob : (crypto.randomUUID().slice(0, 16) + 'Aa1!');
       const { data: newUser, error: createUserError } = await serviceClient.auth.admin.createUser({
-        email: body.email,
-        password: tempPassword,
+        email: accountEmail,
+        password: defaultPassword,
         email_confirm: true,
-        user_metadata: { role: 'tenant', full_name: body.tenantName },
+        user_metadata: { role: 'tenant', full_name: body.tenantName, mobile: body.mobile },
       });
       if (createUserError) {
         return errorResponse(400, `Failed to create user: ${createUserError.message}`);
