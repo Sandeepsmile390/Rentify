@@ -10,10 +10,32 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Rentify">
 
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+
   <title>Rentify — Rent Management</title>
   <link rel="icon" type="image/png" href="icons/Icon-192.png">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
   <link rel="manifest" href="manifest.json">
+
+  <script>
+    // Force unregister all service workers and flush stale Flutter CacheStorage
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(regs) {
+        for (var i = 0; i < regs.length; i++) {
+          regs[i].unregister();
+        }
+      });
+    }
+    if ('caches' in window) {
+      caches.keys().then(function(keys) {
+        for (var j = 0; j < keys.length; j++) {
+          caches.delete(keys[j]);
+        }
+      });
+    }
+  </script>
 
   <style>
     /* Prevent flash of unstyled content */
@@ -122,9 +144,10 @@
     // Safety fallback: ensure splash is never stuck for more than 2.5 seconds
     setTimeout(hideLoading, 2500);
 
+    // Ensure no service workers remain active
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.getRegistrations().then(function(regs) {
-        for (let reg of regs) { reg.update(); }
+        for (let reg of regs) { reg.unregister(); }
       });
     }
   </script>

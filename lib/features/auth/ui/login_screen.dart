@@ -113,8 +113,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
     String loginEmail = identifier;
 
-    // 1. Admin ID: sandeepsmile390 or admin@rentify.app
-    if (idLower == 'sandeepsmile390' || idLower == 'admin@rentify.app') {
+    // 1. Admin ID: sandeepsmile390, admin, or admin@rentify.app
+    if (idLower == 'sandeepsmile390' || idLower == 'admin' || idLower == 'admin@rentify.app') {
       loginEmail = 'sandeepsmile390@rentify.app';
     } else if (cleanDigits.length == 10 && !identifier.contains('@')) {
       // 2. Tenant Mobile Number Login: Lookup account email securely via RPC
@@ -278,9 +278,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                             validator: (v) {
                               final val = (v ?? '').trim();
                               if (val.isEmpty) return 'Please enter your User ID, mobile number or email';
-                              if (val.toLowerCase() == 'sandeepsmile390') return null;
+                              final valLower = val.toLowerCase();
+                              if (valLower == 'sandeepsmile390' || valLower == 'admin' || valLower == 'admin@rentify.app') return null;
                               final digits = val.replaceAll(RegExp(r'\D'), '');
                               if (digits.length >= 10 && !val.contains('@')) return null;
+                              if (!val.contains('@')) return null;
                               return Validators.email(val);
                             },
                           ),
@@ -298,7 +300,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                             onSubmitted: (_) => _signIn(),
                             validator: (v) {
                               final idVal = _emailController.text.trim().toLowerCase();
-                              if (idVal == 'sandeepsmile390') {
+                              if (idVal == 'sandeepsmile390' || idVal == 'admin' || idVal == 'admin@rentify.app') {
                                 if (v == null || v.isEmpty) return 'Password is required';
                                 return null;
                               }
