@@ -9,7 +9,7 @@ import '../theme/app_text_styles.dart';
 class UpdateService {
   static const String currentAppVersion = '1.1.0+3';
   static const String defaultApkUrl =
-      'https://drive.google.com/file/d/17iyA3iucFCk4YTtYbj_X_HpyYXS8C_zx/view?usp=sharing';
+      'https://raw.githubusercontent.com/Sandeepsmile390/Apk/main/app-release.apk';
 
   /// Broadcasts an app update across all tenants and landlords
   static Future<bool> broadcastUpdate({
