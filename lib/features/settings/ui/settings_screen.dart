@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/routing/routes.dart';
 import '../../../core/services/biometric_service.dart';
+import '../../../core/services/update_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -133,11 +134,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     value: _biometricEnabled,
                     enabled: _biometricSupported,
                     onChanged: (v) async {
+                      final sm = ScaffoldMessenger.of(context);
                       final success = await BiometricService.setBiometricEnabled(v);
                       if (mounted) {
                         setState(() => _biometricEnabled = success ? v : false);
                         if (!success && v) {
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          sm.showSnackBar(
                             const SnackBar(
                               content: Text('Biometric authentication failed or canceled.'),
                               backgroundColor: AppColors.error,
@@ -215,6 +217,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     subtitle: '1.1.0 (build 2)',
                     onTap: null,
                   ),
+                  _SettingsTile(
+                    icon: Icons.system_update_rounded,
+                    title: 'Check for updates',
+                    subtitle: 'Verify if a new version or APK is available',
+                    onTap: () => UpdateService.checkForUpdates(context, isManual: true),
+                  ),
+                  if (isAdmin)
+                    _SettingsTile(
+                      icon: Icons.campaign_rounded,
+                      title: 'Broadcast app update',
+                      subtitle: 'Notify all tenants & landlords of new APK release',
+                      onTap: () => _showBroadcastUpdateDialog(),
+                    ),
                   _SettingsTile(
                     icon: Icons.logout_rounded,
                     title: 'Sign out',
@@ -722,6 +737,111 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: const Text('Close'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showBroadcastUpdateDialog() {
+    final versionCtrl = TextEditingController(text: '1.1.1+3');
+    final urlCtrl = TextEditingController(
+      text: 'https://github.com/Sandeepsmile390/Rentify/raw/main/build/app/outputs/flutter-apk/app-release.apk',
+    );
+    final notesCtrl = TextEditingController(
+      text: 'New update with improved performance, advance balance display, tenant notes, and auto-update support.',
+    );
+    bool isSubmitting = false;
+
+    showDialog(
+      context: context,
+      builder: (dCtx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.campaign_rounded, color: AppColors.action),
+              const SizedBox(width: 8),
+              Text('Broadcast App Update', style: AppTextStyles.h2),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Publish a new version release. All active tenants and administrators will be notified, and users opening the app will be prompted with a one-tap Update button.',
+                  style: AppTextStyles.bodyRegular,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: versionCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Target App Version',
+                    hintText: 'e.g. 1.1.1+3',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: urlCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'APK Download URL',
+                    hintText: 'https://...',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: notesCtrl,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Release Notes / What\'s New',
+                    hintText: 'Describe changes...',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSubmitting ? null : () => Navigator.of(dCtx).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: isSubmitting
+                  ? null
+                  : () async {
+                      setDialogState(() => isSubmitting = true);
+                      final success = await UpdateService.broadcastUpdate(
+                        version: versionCtrl.text.trim(),
+                        apkUrl: urlCtrl.text.trim(),
+                        notes: notesCtrl.text.trim(),
+                      );
+                      if (dCtx.mounted) Navigator.of(dCtx).pop();
+                      if (mounted) {
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              success
+                                  ? 'Update notice successfully broadcast to all users!'
+                                  : 'Failed to broadcast update notice.',
+                            ),
+                            backgroundColor: success ? AppColors.success : AppColors.error,
+                          ),
+                        );
+                      }
+                    },
+              icon: isSubmitting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.send_rounded, size: 18),
+              label: const Text('Broadcast Now'),
+            ),
+          ],
+        ),
       ),
     );
   }

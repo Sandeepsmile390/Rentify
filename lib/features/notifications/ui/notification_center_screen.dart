@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/services/notification_service.dart';
+import '../../../core/services/update_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 
@@ -384,6 +385,12 @@ class _NotificationCenterScreenState
                               setState(() {
                                 _items[i] = item.copyWith(isRead: true);
                               });
+                              if (item.category == 'system' ||
+                                  item.title.toLowerCase().contains('update') ||
+                                  (item.body?.toLowerCase().contains('update') ?? false) ||
+                                  (item.body?.toLowerCase().contains('apk') ?? false)) {
+                                UpdateService.checkForUpdates(context, isManual: true);
+                              }
                             },
                           ),
                         );
@@ -465,6 +472,7 @@ class _NotifTile extends StatelessWidget {
     'payment' => Icons.payments_outlined,
     'charge' => Icons.receipt_outlined,
     'meter' => Icons.electric_meter_outlined,
+    'system' => Icons.system_update_rounded,
     _ => Icons.notifications_outlined,
   };
 
@@ -472,6 +480,7 @@ class _NotifTile extends StatelessWidget {
     'payment' => AppColors.successBg,
     'charge' => AppColors.actionBg,
     'meter' => AppColors.warningBg,
+    'system' => AppColors.actionBg,
     _ => AppColors.surfaceVariant,
   };
 
@@ -479,6 +488,7 @@ class _NotifTile extends StatelessWidget {
     'payment' => AppColors.success,
     'charge' => AppColors.action,
     'meter' => AppColors.warning,
+    'system' => AppColors.action,
     _ => AppColors.inkMuted,
   };
 }

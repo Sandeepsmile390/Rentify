@@ -3,7 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+
 import '../../../core/routing/routes.dart';
+import '../../../core/services/update_service.dart';
+import '../../../core/services/whatsapp_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/currency_formatter.dart';
@@ -37,6 +42,9 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
   void initState() {
     super.initState();
     _loadDashboard();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) UpdateService.checkForUpdates(context);
+    });
   }
 
   Future<void> _loadDashboard() async {
@@ -388,7 +396,7 @@ class _DashboardBody extends StatelessWidget {
               const SizedBox(height: 16),
             ],
             // ── Summary stats row ──────────────────────────────
-            _SummaryStatsRow(data: data, isWide: isTablet),
+            _SummaryStatsRow(data: data, isWide: isTablet, onRefresh: onRefresh),
             const SizedBox(height: 20),
 
             // ── Alerts / action items ──────────────────────────
@@ -432,9 +440,14 @@ class _DashboardBody extends StatelessWidget {
 // ── Summary stats cards ───────────────────────────────────────────
 
 class _SummaryStatsRow extends StatelessWidget {
-  const _SummaryStatsRow({required this.data, required this.isWide});
+  const _SummaryStatsRow({
+    required this.data,
+    required this.isWide,
+    required this.onRefresh,
+  });
   final _DashboardData data;
   final bool isWide;
+  final Future<void> Function() onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -453,7 +466,7 @@ class _SummaryStatsRow extends StatelessWidget {
         color: AppColors.warning,
         icon: Icons.bolt_rounded,
         bgColor: AppColors.warningBg,
-        onTap: () => context.push(Routes.billing),
+        onTap: () => _showElectricityDuesBreakdown(context, onRefresh),
       ),
       _StatCard(
         label: 'Collected this month',
@@ -1147,3 +1160,647 @@ class _TenantRow {
 
   int get totalDuePaise => rentDuePaise + elecDuePaise;
 }
+
+// ── Electricity Dues Breakdown Sheet ─────────────────────────────
+
+Future<void> _showElectricityDuesBreakdown(
+  BuildContext context,
+  Future<void> Function() onRefresh,
+) async {
+  await showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => _ElectricityDuesBreakdownSheet(onRefresh: onRefresh),
+  );
+}
+
+class _ElectricityDuesBreakdownSheet extends StatefulWidget {
+  const _ElectricityDuesBreakdownSheet({required this.onRefresh});
+  final Future<void> Function() onRefresh;
+
+  @override
+  State<_ElectricityDuesBreakdownSheet> createState() =>
+      _ElectricityDuesBreakdownSheetState();
+}
+
+class _ElectricityDuesBreakdownSheetState
+    extends State<_ElectricityDuesBreakdownSheet> {
+  bool _isLoading = true;
+  String? _error;
+  List<_TenantElecGroup> _allGroups = [];
+  String _searchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDues();
+  }
+
+  Future<void> _loadDues() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final client = Supabase.instance.client;
+
+      final allocRows = await client
+          .from('charge_allocation_totals')
+          .select('charge_id, tenancy_id, charge_type, billing_month, amount_paise, allocated_paise, outstanding_paise')
+          .eq('charge_type', 'electricity')
+          .gt('outstanding_paise', 0)
+          .order('billing_month', ascending: false);
+
+      final tenancyIds = (allocRows as List)
+          .map((r) => r['tenancy_id']?.toString())
+          .whereType<String>()
+          .toSet()
+          .toList();
+
+      final Map<String, Map<String, dynamic>> tenancyMap = {};
+      if (tenancyIds.isNotEmpty) {
+        final tRows = await client
+            .from('tenancies')
+            .select('id, tenant_name, unit_id, mobile, is_active')
+            .filter('id', 'in', tenancyIds);
+        for (final t in (tRows as List)) {
+          tenancyMap[t['id'].toString()] = t as Map<String, dynamic>;
+        }
+      }
+
+      final Map<String, List<_MonthElecItem>> byTenancy = {};
+      for (final r in (allocRows as List)) {
+        final tId = r['tenancy_id']?.toString() ?? '';
+        final cId = r['charge_id']?.toString() ?? '';
+        final bMonth = r['billing_month']?.toString() ?? '';
+        final amt = (r['amount_paise'] as num?)?.toInt() ?? 0;
+        final alloc = (r['allocated_paise'] as num?)?.toInt() ?? 0;
+        final out = (r['outstanding_paise'] as num?)?.toInt() ?? 0;
+
+        byTenancy.putIfAbsent(tId, () => []).add(
+          _MonthElecItem(
+            chargeId: cId,
+            billingMonth: bMonth,
+            amountPaise: amt,
+            allocatedPaise: alloc,
+            outstandingPaise: out,
+          ),
+        );
+      }
+
+      final List<_TenantElecGroup> groups = [];
+      byTenancy.forEach((tId, months) {
+        final tInfo = tenancyMap[tId];
+        final name = (tInfo?['tenant_name'] as String?) ?? 'Tenant';
+        final unit = (tInfo?['unit_id'] as String?) ?? '—';
+        final mobile = (tInfo?['mobile'] as String?) ?? '';
+        final isActive = (tInfo?['is_active'] as bool?) ?? true;
+
+        months.sort((a, b) => b.billingMonth.compareTo(a.billingMonth));
+        final totalDue = months.fold<int>(0, (sum, m) => sum + m.outstandingPaise);
+
+        groups.add(
+          _TenantElecGroup(
+            tenancyId: tId,
+            tenantName: name,
+            unitId: unit,
+            mobile: mobile,
+            isActive: isActive,
+            totalDuePaise: totalDue,
+            months: months,
+          ),
+        );
+      });
+
+      groups.sort((a, b) => b.totalDuePaise.compareTo(a.totalDuePaise));
+
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _allGroups = groups;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _error = 'Failed to load electricity dues: $e';
+        });
+      }
+    }
+  }
+
+  void _shareWhatsAppNotice(_TenantElecGroup group) {
+    final buffer = StringBuffer();
+    buffer.writeln('Hello ${group.tenantName},');
+    buffer.writeln('');
+    buffer.writeln('This is a reminder for pending *ELECTRICITY DUES* for Unit *${group.unitId}*:');
+    buffer.writeln('━━━━━━━━━━━━━━━━━━━━');
+    for (final m in group.months) {
+      buffer.writeln('• *${m.formattedMonth}*: ${CurrencyFormatter.fromPaise(m.outstandingPaise)} due (Billed: ${CurrencyFormatter.fromPaise(m.amountPaise)})');
+    }
+    buffer.writeln('━━━━━━━━━━━━━━━━━━━━');
+    buffer.writeln('*Total Electricity Due: ${CurrencyFormatter.fromPaise(group.totalDuePaise)}*');
+    buffer.writeln('');
+    buffer.writeln('Please clear the outstanding electricity bill at your earliest convenience.');
+    buffer.writeln('Thank you!');
+
+    final msg = buffer.toString();
+    if (group.mobile.isNotEmpty) {
+      final uri = WhatsAppService.buildWhatsAppUri(phone: group.mobile, message: msg);
+      launchUrl(uri, mode: LaunchMode.externalApplication).catchError((_) {
+        _copyToClipboard(msg);
+        return false;
+      });
+    } else {
+      _copyToClipboard(msg);
+    }
+  }
+
+  void _copyToClipboard(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Notice copied to clipboard! (No mobile number found)'),
+        backgroundColor: AppColors.action,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final sheetHeight = mediaQuery.size.height * 0.88;
+
+    final filteredGroups = _allGroups.where((g) {
+      if (_searchQuery.trim().isEmpty) return true;
+      final q = _searchQuery.toLowerCase();
+      final inName = g.tenantName.toLowerCase().contains(q);
+      final inUnit = g.unitId.toLowerCase().contains(q);
+      final inMonth = g.months.any((m) => m.formattedMonth.toLowerCase().contains(q));
+      return inName || inUnit || inMonth;
+    }).toList();
+
+    final grandTotalPaise = _allGroups.fold<int>(0, (sum, g) => sum + g.totalDuePaise);
+
+    return Container(
+      height: sheetHeight,
+      decoration: const BoxDecoration(
+        color: AppColors.canvas,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        children: [
+          // Drag handle
+          Container(
+            margin: const EdgeInsets.only(top: 10, bottom: 6),
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: AppColors.border,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+
+          // Header
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 12, 12),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.warningBg,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.bolt_rounded, color: AppColors.warning, size: 24),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Electricity Dues Breakdown',
+                        style: AppTextStyles.h2.copyWith(fontSize: 18),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Tenant-wise and month-wise outstanding charges',
+                        style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded),
+                  tooltip: 'Close',
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+
+          // Summary bar & Search box
+          if (!_isLoading && _error == null) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'TOTAL ELECTRICITY DUE',
+                            style: AppTextStyles.captionBold.copyWith(fontSize: 10, letterSpacing: 0.5, color: AppColors.inkMuted),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            CurrencyFormatter.fromPaise(grandTotalPaise),
+                            style: AppTextStyles.h1.copyWith(
+                              color: grandTotalPaise > 0 ? AppColors.warning : AppColors.success,
+                              fontSize: 22,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: grandTotalPaise > 0 ? AppColors.warningBg : AppColors.successBg,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        '${_allGroups.length} Tenants with dues',
+                        style: AppTextStyles.captionBold.copyWith(
+                          color: grandTotalPaise > 0 ? AppColors.warning : AppColors.success,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextField(
+                onChanged: (val) => setState(() => _searchQuery = val),
+                decoration: InputDecoration(
+                  hintText: 'Search by tenant name, unit or month...',
+                  prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear_rounded, size: 18),
+                          onPressed: () => setState(() => _searchQuery = ''),
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: AppColors.surface,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: AppColors.border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: AppColors.border),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+
+          // Content body
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.error_outline_rounded, color: AppColors.error, size: 40),
+                              const SizedBox(height: 12),
+                              Text(_error!, textAlign: TextAlign.center, style: AppTextStyles.bodyRegular),
+                              const SizedBox(height: 16),
+                              FilledButton(onPressed: _loadDues, child: const Text('Retry')),
+                            ],
+                          ),
+                        ),
+                      )
+                    : filteredGroups.isEmpty
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(32),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: const BoxDecoration(
+                                      color: AppColors.successBg,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(Icons.check_circle_rounded, color: AppColors.success, size: 48),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    _searchQuery.isNotEmpty
+                                        ? 'No matching electricity dues'
+                                        : 'All Electricity Dues Cleared!',
+                                    style: AppTextStyles.h2,
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    _searchQuery.isNotEmpty
+                                        ? 'Try searching with a different name, room or month.'
+                                        : 'No tenants have outstanding electricity charges recorded in the system.',
+                                    style: AppTextStyles.bodyRegular.copyWith(color: AppColors.inkMuted),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        : ListView.separated(
+                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                            itemCount: filteredGroups.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: 12),
+                            itemBuilder: (ctx, index) {
+                              final group = filteredGroups[index];
+                              return _TenantElecCard(
+                                group: group,
+                                onWhatsApp: () => _shareWhatsAppNotice(group),
+                                onRecordPayment: () async {
+                                  Navigator.pop(ctx);
+                                  await context.pushNamed(
+                                    'record-payment',
+                                    pathParameters: {'tenancyId': group.tenancyId},
+                                  );
+                                  await widget.onRefresh();
+                                },
+                                onViewProfile: () {
+                                  Navigator.pop(ctx);
+                                  context.pushNamed(
+                                    'tenant-profile',
+                                    pathParameters: {'tenancyId': group.tenancyId},
+                                  );
+                                },
+                              );
+                            },
+                          ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TenantElecCard extends StatelessWidget {
+  const _TenantElecCard({
+    required this.group,
+    required this.onWhatsApp,
+    required this.onRecordPayment,
+    required this.onViewProfile,
+  });
+
+  final _TenantElecGroup group;
+  final VoidCallback onWhatsApp;
+  final VoidCallback onRecordPayment;
+  final VoidCallback onViewProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Tenant header
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 20,
+                  backgroundColor: AppColors.navy.withValues(alpha: 0.1),
+                  child: Text(
+                    group.tenantName.isNotEmpty ? group.tenantName[0].toUpperCase() : '?',
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.navy),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              group.tenantName,
+                              style: AppTextStyles.h3.copyWith(fontSize: 15),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.navy.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              group.unitId,
+                              style: AppTextStyles.captionBold.copyWith(fontSize: 11),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        group.mobile.isNotEmpty ? group.mobile : 'No mobile registered',
+                        style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.warningBg,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
+                  ),
+                  child: Text(
+                    '${CurrencyFormatter.fromPaise(group.totalDuePaise)} due',
+                    style: AppTextStyles.captionBold.copyWith(color: AppColors.warning),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const Divider(height: 1),
+
+          // Month-wise breakdown table
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'MONTH-WISE BREAKDOWN',
+                  style: AppTextStyles.captionBold.copyWith(fontSize: 10, letterSpacing: 0.5, color: AppColors.inkMuted),
+                ),
+                const SizedBox(height: 6),
+                ...group.months.map((m) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_month_outlined, size: 16, color: AppColors.inkMuted),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              m.formattedMonth,
+                              style: AppTextStyles.bodyMedium.copyWith(fontSize: 13),
+                            ),
+                          ),
+                          Text(
+                            'Billed ${CurrencyFormatter.fromPaise(m.amountPaise)}',
+                            style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.errorBg,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              '${CurrencyFormatter.fromPaise(m.outstandingPaise)} due',
+                              style: AppTextStyles.captionBold.copyWith(color: AppColors.amountDue),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )),
+              ],
+            ),
+          ),
+
+          const Divider(height: 1),
+
+          // Action row
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
+            child: Row(
+              children: [
+                TextButton.icon(
+                  onPressed: onWhatsApp,
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF25D366),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    minimumSize: Size.zero,
+                  ),
+                  icon: const Icon(Icons.share_rounded, size: 16),
+                  label: const Text('WhatsApp Notice', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                ),
+                const Spacer(),
+                OutlinedButton(
+                  onPressed: onViewProfile,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    minimumSize: Size.zero,
+                  ),
+                  child: const Text('Profile', style: TextStyle(fontSize: 12)),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: onRecordPayment,
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    minimumSize: Size.zero,
+                  ),
+                  child: const Text('Record Payment', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TenantElecGroup {
+  final String tenancyId;
+  final String tenantName;
+  final String unitId;
+  final String mobile;
+  final bool isActive;
+  final int totalDuePaise;
+  final List<_MonthElecItem> months;
+
+  const _TenantElecGroup({
+    required this.tenancyId,
+    required this.tenantName,
+    required this.unitId,
+    required this.mobile,
+    required this.isActive,
+    required this.totalDuePaise,
+    required this.months,
+  });
+}
+
+class _MonthElecItem {
+  final String chargeId;
+  final String billingMonth;
+  final int amountPaise;
+  final int allocatedPaise;
+  final int outstandingPaise;
+
+  const _MonthElecItem({
+    required this.chargeId,
+    required this.billingMonth,
+    required this.amountPaise,
+    required this.allocatedPaise,
+    required this.outstandingPaise,
+  });
+
+  String get formattedMonth {
+    try {
+      final parts = billingMonth.split('-');
+      if (parts.length >= 2) {
+        final y = int.parse(parts[0]);
+        final m = int.parse(parts[1]);
+        final dt = DateTime(y, m, 1);
+        return DateFormat('MMMM yyyy').format(dt);
+      }
+      return billingMonth;
+    } catch (_) {
+      return billingMonth;
+    }
+  }
+}
+

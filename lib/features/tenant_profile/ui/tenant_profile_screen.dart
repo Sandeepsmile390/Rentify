@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/routing/routes.dart';
 import '../../../core/services/whatsapp_service.dart';
@@ -34,7 +33,7 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 4, vsync: this);
+    _tabCtrl = TabController(length: 5, vsync: this);
     _load();
   }
 
@@ -74,6 +73,26 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
       final startDate = (tenancy['start_date'] as String?) ?? '';
       final isActive = (tenancy['is_active'] as bool?) ?? true;
       final loginEnabled = (tenancy['login_enabled'] as bool?) ?? true;
+      final notes = (tenancy['notes'] as String?)?.trim();
+
+      String? email;
+      final profileId = tenancy['profile_id'] as String?;
+      if (profileId != null) {
+        try {
+          final profileRes = await client
+              .from('profiles')
+              .select('email')
+              .eq('id', profileId)
+              .maybeSingle();
+          if (profileRes != null) {
+            email = profileRes['email'] as String?;
+          }
+        } catch (_) {}
+      }
+      if (email == null && mobile.isNotEmpty) {
+        final cleanDigits = mobile.replaceAll(RegExp(r'\D'), '');
+        email = '$cleanDigits@rentify.in';
+      }
 
       // 2. Rent rate
       int currentRentPaise = 0;
@@ -90,28 +109,70 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
         rentEffectiveFrom = (rentRes['effective_from'] as String?) ?? startDate;
       }
 
+      // 2b. Fetch system billing day
+      int billingDay = 1;
+      try {
+        final settingRes = await client
+            .from('system_settings')
+            .select('value')
+            .eq('key', 'billing_day')
+            .maybeSingle();
+        if (settingRes != null && settingRes['value'] != null) {
+          billingDay = int.tryParse(settingRes['value'].toString()) ?? 1;
+        }
+      } catch (_) {}
+      final isBillingDateCrossed = now.day >= billingDay;
+
       // 3. Electricity config
       String elecMode = 'meter';
+      double? initialMeterReading;
+      String? initialReadingDate;
+      int fixedElecAmountPaise = 0;
       final elecRes = await client
           .from('electricity_config')
-          .select('mode')
+          .select('mode, initial_reading, fixed_amount_paise, created_at')
           .eq('tenancy_id', widget.tenancyId)
           .maybeSingle();
       if (elecRes != null) {
         elecMode = (elecRes['mode'] as String?) ?? 'meter';
+        if (elecRes['initial_reading'] != null) {
+          initialMeterReading = (elecRes['initial_reading'] as num?)?.toDouble();
+        }
+        initialReadingDate = elecRes['created_at'] as String?;
+        fixedElecAmountPaise = (elecRes['fixed_amount_paise'] as num?)?.toInt() ?? 0;
       }
 
-      // 4. Last meter reading
-      double lastMeter = 0.0;
-      final meterRes = await client
-          .from('meter_readings')
-          .select('current_reading')
-          .eq('tenancy_id', widget.tenancyId)
-          .order('reading_date', ascending: false)
-          .limit(1)
-          .maybeSingle();
-      if (meterRes != null) {
-        lastMeter = (meterRes['current_reading'] as num?)?.toDouble() ?? 0.0;
+      // 4. Meter readings history (sorted by billing_month & creation time)
+      final List<_MeterReadingItem> meterReadingItems = [];
+      double lastMeter = initialMeterReading ?? 0.0;
+      try {
+        final meterHistoryRes = await client
+            .from('meter_readings')
+            .select('id, billing_month, previous_reading, current_reading, units_consumed, rate_paise, amount_paise, is_corrected, notes, created_at')
+            .eq('tenancy_id', widget.tenancyId)
+            .order('billing_month', ascending: false)
+            .order('created_at', ascending: false);
+
+        for (final m in (meterHistoryRes as List<dynamic>)) {
+          meterReadingItems.add(_MeterReadingItem(
+            id: (m['id'] as String?) ?? '',
+            billingMonth: (m['billing_month'] as String?) ?? '',
+            previousReading: (m['previous_reading'] as num?)?.toDouble() ?? 0.0,
+            currentReading: (m['current_reading'] as num?)?.toDouble() ?? 0.0,
+            unitsConsumed: (m['units_consumed'] as num?)?.toDouble() ?? 0.0,
+            ratePaise: (m['rate_paise'] as num?)?.toInt() ?? 0,
+            amountPaise: (m['amount_paise'] as num?)?.toInt() ?? 0,
+            isCorrected: (m['is_corrected'] as bool?) ?? false,
+            notes: m['notes'] as String?,
+            createdAt: (m['created_at'] as String?) ?? '',
+          ));
+        }
+
+        if (meterReadingItems.isNotEmpty) {
+          lastMeter = meterReadingItems.first.currentReading;
+        }
+      } catch (e) {
+        debugPrint('Notice loading meter readings: $e');
       }
 
       // 5. Query charge allocation totals view
@@ -127,6 +188,7 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
       Map<String, dynamic>? currentCanonicalElecCharge;
 
       final List<_ChargeItem> chargeItems = [];
+      final currentMonthPrefix = canonicalMonth.substring(0, 7);
 
       for (final r in (allocRes as List<dynamic>)) {
         final cType = (r['charge_type'] as String?) ?? 'rent';
@@ -134,13 +196,14 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
         final out = (r['outstanding_paise'] as num?)?.toInt() ?? 0;
         final alloc = (r['allocated_paise'] as num?)?.toInt() ?? 0;
         final month = (r['billing_month'] as String?) ?? '';
+        final isCurrentMonth = month.startsWith(currentMonthPrefix);
 
         if (out > 0) {
           if (cType == 'rent') rentDuePaise += out;
           if (cType == 'electricity') elecDuePaise += out;
         }
 
-        if (month == canonicalMonth) {
+        if (isCurrentMonth) {
           if (cType == 'rent' && amt > 0) {
             currentRentPaise = amt;
           } else if (cType == 'electricity') {
@@ -182,27 +245,33 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
           } else if (alloc > 0) {
             elecStatus = '${CurrencyFormatter.fromPaise(out)} due (Partially paid)';
           } else {
-            elecStatus = '${CurrencyFormatter.fromPaise(out)} due';
+            elecStatus = CurrencyFormatter.fromPaise(amt);
           }
         } else {
-          // Check if meter reading exists for canonical month
-          final readingRes = await client
-              .from('meter_readings')
-              .select('id, current_reading')
-              .eq('tenancy_id', widget.tenancyId)
-              .eq('billing_month', canonicalMonth)
-              .maybeSingle();
+          // Check if meter reading exists for this month in meter readings history
+          final currentMonthReading = meterReadingItems.where((m) =>
+            m.billingMonth.startsWith(currentMonthPrefix)
+          ).firstOrNull;
 
-          if (readingRes != null) {
-            elecStatus = 'Reading saved / charge pending';
-          } else {
+          if (currentMonthReading != null) {
+            elecStatus = CurrencyFormatter.fromPaise(currentMonthReading.amountPaise);
+          } else if (isBillingDateCrossed) {
             elecStatus = 'Awaiting reading';
+          } else {
+            final suffix = switch (billingDay) {
+              1 || 21 || 31 => 'st',
+              2 || 22 => 'nd',
+              3 || 23 => 'rd',
+              _ => 'th',
+            };
+            elecStatus = 'Due on $billingDay$suffix';
           }
         }
       } else if (elecMode == 'fixed') {
-        elecStatus = CurrencyFormatter.fromPaise(currentElecPaise);
+        final amt = currentElecPaise > 0 ? currentElecPaise : fixedElecAmountPaise;
+        elecStatus = '${CurrencyFormatter.fromPaise(amt)}/month';
       } else {
-        elecStatus = 'No charge required';
+        elecStatus = 'Included in rent';
       }
 
       // 6. Payments
@@ -213,7 +282,6 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
           .order('payment_date', ascending: false);
 
       int paymentsThisMonthPaise = 0;
-      final currentMonthPrefix = '${now.year}-${now.month.toString().padLeft(2, '0')}';
       final List<_PaymentItem> paymentItems = [];
 
       for (final p in (paymentsRes as List<dynamic>)) {
@@ -280,6 +348,11 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
           elecStatus: elecStatus,
           paymentsThisMonthPaise: paymentsThisMonthPaise,
           lastMeterReading: lastMeter,
+          initialMeterReading: initialMeterReading,
+          initialReadingDate: initialReadingDate,
+          meterReadings: meterReadingItems,
+          email: email,
+          notes: notes,
           charges: chargeItems,
           payments: paymentItems,
         );
@@ -296,12 +369,42 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
   }
 
   Future<void> _handleToggleLogin(bool enabled) async {
+    final prevEnabled = _data?.loginEnabled ?? !enabled;
+    setState(() {
+      if (_data != null) {
+        _data = _data!.copyWith(loginEnabled: enabled);
+      }
+    });
+
     try {
       final client = Supabase.instance.client;
-      await client.rpc('admin_toggle_tenant_login', params: {
-        'p_tenancy_id': widget.tenancyId,
-        'p_enabled': enabled,
-      });
+      try {
+        await client.rpc('admin_toggle_tenant_login', params: {
+          'p_tenancy_id': widget.tenancyId,
+          'p_enabled': enabled,
+        });
+      } catch (rpcErr) {
+        debugPrint('RPC admin_toggle_tenant_login fallback to table update: $rpcErr');
+        await client.from('tenancies').update({
+          'login_enabled': enabled,
+          'updated_at': DateTime.now().toIso8601String(),
+        }).eq('id', widget.tenancyId);
+
+        try {
+          final tRow = await client
+              .from('tenancies')
+              .select('profile_id')
+              .eq('id', widget.tenancyId)
+              .maybeSingle();
+          if (tRow != null && tRow['profile_id'] != null) {
+            await client.from('profiles').update({
+              'login_enabled': enabled,
+              'updated_at': DateTime.now().toIso8601String(),
+            }).eq('id', tRow['profile_id']);
+          }
+        } catch (_) {}
+      }
+
       await _load();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -310,16 +413,470 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
               ? 'Tenant login enabled. Resident can access portal.'
               : 'Tenant login disabled. Active sessions revoked.'),
           backgroundColor: enabled ? AppColors.success : AppColors.warning,
+          duration: const Duration(seconds: 3),
         ),
       );
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to update tenant login: $e'),
-          backgroundColor: AppColors.error,
+      if (mounted) {
+        setState(() {
+          if (_data != null) {
+            _data = _data!.copyWith(loginEnabled: prevEnabled);
+          }
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update tenant login: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _showEditTenantDialog() async {
+    if (!mounted || _data == null) return;
+
+    final nameCtrl = TextEditingController(text: _data!.name);
+    final mobileCtrl = TextEditingController(text: _data!.mobile);
+    final emailCtrl = TextEditingController(text: _data!.email ?? '');
+    final unitCtrl = TextEditingController(text: _data!.unitId);
+    final rentCtrl = TextEditingController(
+      text: _data!.currentRentPaise > 0
+          ? (_data!.currentRentPaise / 100).toStringAsFixed(0)
+          : '',
+    );
+    final notesCtrl = TextEditingController(text: _data!.notes ?? '');
+
+    String selectedType = _data!.type.toLowerCase() == 'shop' ? 'shop' : 'room';
+    bool isActive = _data!.isActive;
+    DateTime parsedStartDate = DateTime.tryParse(_data!.startDate) ?? DateTime.now();
+    DateTime? parsedEndDate = isActive ? null : DateTime.now();
+
+    final formKey = GlobalKey<FormState>();
+
+    final updated = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dCtx) {
+        return StatefulBuilder(
+          builder: (sbCtx, setDialogState) {
+            final isSaving = ValueNotifier<bool>(false);
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              actionsPadding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.action.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.person_outline_rounded, color: AppColors.action),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Edit Tenant Details', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        Text('Update contact, tenancy status & rent', style: TextStyle(fontSize: 12, color: AppColors.inkMuted)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 500,
+                child: Form(
+                  key: formKey,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TextFormField(
+                          controller: nameCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Full Name *',
+                            prefixIcon: Icon(Icons.badge_outlined, size: 20),
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                          ),
+                          validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter name' : null,
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                controller: mobileCtrl,
+                                keyboardType: TextInputType.phone,
+                                decoration: const InputDecoration(
+                                  labelText: 'Mobile Number *',
+                                  prefixIcon: Icon(Icons.phone_outlined, size: 20),
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                                ),
+                                validator: (v) {
+                                  if (v == null || v.trim().isEmpty) return 'Enter mobile';
+                                  final digits = v.replaceAll(RegExp(r'\D'), '');
+                                  if (digits.length < 10) return 'Min 10 digits';
+                                  return null;
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: TextFormField(
+                                controller: unitCtrl,
+                                decoration: const InputDecoration(
+                                  labelText: 'Unit / Room ID *',
+                                  prefixIcon: Icon(Icons.home_outlined, size: 20),
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                                ),
+                                validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter unit ID' : null,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: emailCtrl,
+                          keyboardType: TextInputType.emailAddress,
+                          decoration: const InputDecoration(
+                            labelText: 'Email Address (optional)',
+                            prefixIcon: Icon(Icons.email_outlined, size: 20),
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: DropdownButtonFormField<String>(
+                                value: selectedType,
+                                decoration: const InputDecoration(
+                                  labelText: 'Tenant Type',
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                                ),
+                                items: const [
+                                  DropdownMenuItem(value: 'room', child: Text('Room')),
+                                  DropdownMenuItem(value: 'shop', child: Text('Shop')),
+                                ],
+                                onChanged: (val) {
+                                  if (val != null) setDialogState(() => selectedType = val);
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: DropdownButtonFormField<bool>(
+                                value: isActive,
+                                decoration: const InputDecoration(
+                                  labelText: 'Status',
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                                ),
+                                items: const [
+                                  DropdownMenuItem(
+                                    value: true,
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.check_circle_rounded, color: AppColors.success, size: 18),
+                                        SizedBox(width: 6),
+                                        Text('Active'),
+                                      ],
+                                    ),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: false,
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.cancel_rounded, color: AppColors.error, size: 18),
+                                        SizedBox(width: 6),
+                                        Text('Left / Vacated'),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                                onChanged: (val) {
+                                  if (val != null) {
+                                    setDialogState(() {
+                                      isActive = val;
+                                      if (!isActive && parsedEndDate == null) {
+                                        parsedEndDate = DateTime.now();
+                                      }
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        InkWell(
+                          onTap: () async {
+                            final picked = await showDatePicker(
+                              context: sbCtx,
+                              initialDate: parsedStartDate,
+                              firstDate: DateTime(2000),
+                              lastDate: DateTime.now().add(const Duration(days: 365)),
+                            );
+                            if (picked != null) {
+                              setDialogState(() => parsedStartDate = picked);
+                            }
+                          },
+                          borderRadius: BorderRadius.circular(4),
+                          child: InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: 'Start Date *',
+                              prefixIcon: Icon(Icons.calendar_today_rounded, size: 18),
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                            ),
+                            child: Text(DateFormat('yyyy-MM-dd').format(parsedStartDate)),
+                          ),
+                        ),
+                        if (!isActive) ...[
+                          const SizedBox(height: 12),
+                          InkWell(
+                            onTap: () async {
+                              final picked = await showDatePicker(
+                                context: sbCtx,
+                                initialDate: parsedEndDate ?? DateTime.now(),
+                                firstDate: parsedStartDate,
+                                lastDate: DateTime.now().add(const Duration(days: 365)),
+                              );
+                              if (picked != null) {
+                                setDialogState(() => parsedEndDate = picked);
+                              }
+                            },
+                            borderRadius: BorderRadius.circular(4),
+                            child: InputDecorator(
+                              decoration: const InputDecoration(
+                                labelText: 'End Date / Date Vacated *',
+                                prefixIcon: Icon(Icons.event_busy_rounded, size: 18),
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                              ),
+                              child: Text(DateFormat('yyyy-MM-dd').format(parsedEndDate ?? DateTime.now())),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: rentCtrl,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(
+                            labelText: 'Monthly Rent (₹)',
+                            prefixIcon: Icon(Icons.currency_rupee_rounded, size: 20),
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: notesCtrl,
+                          maxLines: 2,
+                          decoration: const InputDecoration(
+                            labelText: 'Internal Notes / Remarks',
+                            prefixIcon: Icon(Icons.note_alt_outlined, size: 20),
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dCtx, false),
+                  child: const Text('Cancel'),
+                ),
+                ValueListenableBuilder<bool>(
+                  valueListenable: isSaving,
+                  builder: (ctx, saving, _) => FilledButton(
+                    onPressed: saving
+                        ? null
+                        : () async {
+                            if (!formKey.currentState!.validate()) return;
+                            isSaving.value = true;
+                            try {
+                              final client = Supabase.instance.client;
+                              final name = nameCtrl.text.trim();
+                              final mobile = mobileCtrl.text.trim();
+                              final email = emailCtrl.text.trim();
+                              final unitId = unitCtrl.text.trim();
+                              final rentVal = double.tryParse(rentCtrl.text.trim()) ?? 0;
+                              final rentPaise = (rentVal * 100).round();
+                              final notes = notesCtrl.text.trim();
+                              final startDateStr = DateFormat('yyyy-MM-dd').format(parsedStartDate);
+                              final endDateStr = (!isActive && parsedEndDate != null)
+                                  ? DateFormat('yyyy-MM-dd').format(parsedEndDate!)
+                                  : null;
+
+                              try {
+                                await client.rpc('admin_update_tenant_details', params: {
+                                  'p_tenancy_id': widget.tenancyId,
+                                  'p_tenant_name': name,
+                                  'p_mobile': mobile,
+                                  'p_email': email.isEmpty ? null : email,
+                                  'p_unit_id': unitId,
+                                  'p_tenant_type': selectedType,
+                                  'p_start_date': startDateStr,
+                                  'p_is_active': isActive,
+                                  'p_end_date': endDateStr,
+                                  'p_rent_paise': rentPaise > 0 ? rentPaise : null,
+                                  'p_notes': notes.isEmpty ? null : notes,
+                                });
+                              } catch (rpcErr) {
+                                debugPrint('RPC admin_update_tenant_details fallback: $rpcErr');
+                                await client.from('tenancies').update({
+                                  'tenant_name': name,
+                                  'mobile': mobile.isEmpty ? null : mobile,
+                                  'unit_id': unitId,
+                                  'tenant_type': selectedType,
+                                  'start_date': startDateStr,
+                                  'is_active': isActive,
+                                  'end_date': endDateStr,
+                                  'notes': notes.isEmpty ? null : notes,
+                                  'updated_at': DateTime.now().toIso8601String(),
+                                }).eq('id', widget.tenancyId);
+
+                                if (rentPaise > 0) {
+                                  await client.from('rent_rates').insert({
+                                    'tenancy_id': widget.tenancyId,
+                                    'amount_paise': rentPaise,
+                                    'effective_from': startDateStr,
+                                  });
+                                }
+                              }
+
+                              if (dCtx.mounted) Navigator.pop(dCtx, true);
+                            } catch (e) {
+                              isSaving.value = false;
+                              if (dCtx.mounted) {
+                                ScaffoldMessenger.of(dCtx).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Failed to update tenant: $e'),
+                                    backgroundColor: AppColors.error,
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                    child: saving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Text('Save Changes'),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (updated == true) {
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Tenant details updated successfully.'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _showEditNotesDialog(
+    BuildContext context,
+    String tenancyId,
+    String? currentNotes,
+  ) async {
+    final ctrl = TextEditingController(text: currentNotes ?? '');
+    final res = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.edit_note_rounded, color: AppColors.action),
+            SizedBox(width: 8),
+            Text('Notes & Remarks'),
+          ],
         ),
-      );
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Add internal comments, payment agreements, or notes for this tenant:',
+              style: TextStyle(fontSize: 13, color: AppColors.inkMuted),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                hintText: 'e.g. Deposit receipt number, special rent terms, notice dates...',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dCtx, true),
+            child: const Text('Save Note'),
+          ),
+        ],
+      ),
+    );
+
+    if (res == true) {
+      try {
+        final client = Supabase.instance.client;
+        final updatedText = ctrl.text.trim();
+        await client
+            .from('tenancies')
+            .update({'notes': updatedText.isEmpty ? null : updatedText})
+            .eq('id', tenancyId);
+
+        await _load();
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Tenancy notes saved successfully.'),
+              backgroundColor: AppColors.success,
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to save notes: $e'), backgroundColor: AppColors.error),
+          );
+        }
+      }
     }
   }
 
@@ -362,8 +919,13 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
                       data: _data!,
                       tenancyId: widget.tenancyId,
                       onRefresh: _load,
+                      onEdit: _showEditTenantDialog,
                     ),
-                _FinancialSummaryBar(data: _data!, isWide: isWide),
+                _FinancialSummaryBar(
+                  data: _data!,
+                  isWide: isWide,
+                  tenancyId: widget.tenancyId,
+                ),
                 _TabBar(controller: _tabCtrl),
               ],
               body: TabBarView(
@@ -375,6 +937,7 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
                       data: _data!,
                       tenancyId: widget.tenancyId,
                       onRefresh: _load,
+                      onEditNotes: (notes) => _showEditNotesDialog(context, widget.tenancyId, notes),
                     ),
                   ),
                   RefreshIndicator(
@@ -387,10 +950,20 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
                   ),
                   RefreshIndicator(
                     onRefresh: _load,
+                    child: _MeterTab(
+                      data: _data!,
+                      tenancyId: widget.tenancyId,
+                      onRefresh: _load,
+                    ),
+                  ),
+                  RefreshIndicator(
+                    onRefresh: _load,
                     child: _DetailsTab(
                       data: _data!,
                       tenancyId: widget.tenancyId,
                       onToggleLogin: _handleToggleLogin,
+                      onEditNotes: (notes) => _showEditNotesDialog(context, widget.tenancyId, notes),
+                      onEditTenant: _showEditTenantDialog,
                     ),
                   ),
                 ],
@@ -421,10 +994,12 @@ class _ProfileAppBar extends StatelessWidget {
     required this.data,
     required this.tenancyId,
     required this.onRefresh,
+    required this.onEdit,
   });
   final _ProfileData data;
   final String tenancyId;
   final Future<void> Function() onRefresh;
+  final VoidCallback onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -493,6 +1068,11 @@ class _ProfileAppBar extends StatelessWidget {
       ),
       actions: [
         IconButton(
+          icon: const Icon(Icons.edit_outlined, color: Colors.white),
+          tooltip: 'Edit tenant details',
+          onPressed: onEdit,
+        ),
+        IconButton(
           icon: const Icon(Icons.electric_meter_outlined, color: Colors.white),
           tooltip: 'Enter meter reading',
           onPressed: () async {
@@ -526,6 +1106,15 @@ class _ProfileAppBar extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            ListTile(
+              leading: const Icon(Icons.edit_note_rounded, color: AppColors.action),
+              title: const Text('Edit tenant details'),
+              subtitle: const Text('Update name, phone, status, start date, rent'),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                onEdit();
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.swap_vert_rounded),
               title: const Text('Advance / Deposit'),
@@ -587,16 +1176,21 @@ class _ProfileAppBar extends StatelessWidget {
 // ── Financial summary bar ─────────────────────────────────────────
 
 class _FinancialSummaryBar extends StatelessWidget {
-  const _FinancialSummaryBar({required this.data, required this.isWide});
+  const _FinancialSummaryBar({
+    required this.data,
+    required this.isWide,
+    required this.tenancyId,
+  });
   final _ProfileData data;
   final bool isWide;
+  final String tenancyId;
 
   @override
   Widget build(BuildContext context) {
     return SliverToBoxAdapter(
       child: Container(
         color: AppColors.surface,
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
         child: isWide
             ? Row(
                 children: [
@@ -604,37 +1198,101 @@ class _FinancialSummaryBar extends StatelessWidget {
                   _Divider(),
                   _FinStat(label: 'Electricity due', value: CurrencyFormatter.fromPaise(data.elecDuePaise), color: data.elecDuePaise > 0 ? AppColors.warning : AppColors.success),
                   _Divider(),
-                  _FinStat(label: 'Advance balance', value: CurrencyFormatter.fromPaise(data.advanceBalancePaise), color: AppColors.action),
+                  _FinStat(label: 'Current advance', value: CurrencyFormatter.fromPaise(data.advanceBalancePaise), color: AppColors.action),
                   _Divider(),
                   _FinStat(label: 'Total outstanding', value: CurrencyFormatter.fromPaise(data.totalDuePaise), color: data.totalDuePaise > 0 ? AppColors.amountDue : AppColors.success, isLarge: true),
                 ],
               )
             : Column(
                 children: [
-                  Row(children: [
-                    Expanded(child: _FinStat(label: 'Rent due', value: CurrencyFormatter.fromPaise(data.rentDuePaise), color: data.rentDuePaise > 0 ? AppColors.amountDue : AppColors.success)),
-                    Container(width: 1, height: 40, color: AppColors.border),
-                    Expanded(child: _FinStat(label: 'Electricity due', value: CurrencyFormatter.fromPaise(data.elecDuePaise), color: data.elecDuePaise > 0 ? AppColors.warning : AppColors.success)),
-                  ]),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: data.totalDuePaise > 0 ? AppColors.errorBg : AppColors.successBg,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: data.totalDuePaise > 0 ? AppColors.errorBorder : AppColors.successBorder),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Total outstanding', style: AppTextStyles.bodyMedium),
-                        Text(
-                          CurrencyFormatter.fromPaise(data.totalDuePaise),
-                          style: AppTextStyles.currencyMedium.copyWith(
-                            color: data.totalDuePaise > 0 ? AppColors.amountDue : AppColors.success,
-                          ),
+                  // 3-Stat Top Row: Rent Due | Electricity Due | Current Advance
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _FinStat(
+                          label: 'Rent due',
+                          value: CurrencyFormatter.fromPaise(data.rentDuePaise),
+                          color: data.rentDuePaise > 0 ? AppColors.amountDue : AppColors.success,
                         ),
-                      ],
+                      ),
+                      Container(width: 1, height: 36, color: AppColors.border),
+                      Expanded(
+                        child: _FinStat(
+                          label: 'Electricity due',
+                          value: CurrencyFormatter.fromPaise(data.elecDuePaise),
+                          color: data.elecDuePaise > 0 ? AppColors.warning : AppColors.success,
+                        ),
+                      ),
+                      Container(width: 1, height: 36, color: AppColors.border),
+                      Expanded(
+                        child: _FinStat(
+                          label: 'Current advance',
+                          value: CurrencyFormatter.fromPaise(data.advanceBalancePaise),
+                          color: AppColors.action,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Tap-able Split Banner: Total Outstanding & Security Advance
+                  InkWell(
+                    onTap: () {
+                      context.pushNamed('advances', pathParameters: {'tenancyId': tenancyId});
+                    },
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: data.totalDuePaise > 0 ? AppColors.errorBg : AppColors.successBg,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: data.totalDuePaise > 0 ? AppColors.errorBorder : AppColors.successBorder,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Total outstanding', style: AppTextStyles.captionBold),
+                              const SizedBox(height: 2),
+                              Text(
+                                CurrencyFormatter.fromPaise(data.totalDuePaise),
+                                style: AppTextStyles.currencyMedium.copyWith(
+                                  color: data.totalDuePaise > 0 ? AppColors.amountDue : AppColors.success,
+                                ),
+                              ),
+                            ],
+                          ),
+                          Row(
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.account_balance_wallet_outlined, size: 14, color: AppColors.action),
+                                      const SizedBox(width: 4),
+                                      Text('Advance held', style: AppTextStyles.captionBold.copyWith(color: AppColors.action)),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    CurrencyFormatter.fromPaise(data.advanceBalancePaise),
+                                    style: AppTextStyles.bodyMedium.copyWith(
+                                      color: AppColors.action,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(width: 6),
+                              const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.action),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -700,6 +1358,7 @@ class _TabBar extends StatelessWidget {
             Tab(text: 'Overview'),
             Tab(text: 'Charges'),
             Tab(text: 'Payments'),
+            Tab(text: 'Meter'),
             Tab(text: 'Details'),
           ],
         ),
@@ -715,10 +1374,12 @@ class _OverviewTab extends StatelessWidget {
     required this.data,
     required this.tenancyId,
     required this.onRefresh,
+    required this.onEditNotes,
   });
   final _ProfileData data;
   final String tenancyId;
   final Future<void> Function() onRefresh;
+  final void Function(String?) onEditNotes;
 
   @override
   Widget build(BuildContext context) {
@@ -761,7 +1422,37 @@ class _OverviewTab extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 16),
+
+        // WhatsApp dues summary button
+        AppButton(
+          label: 'Send WhatsApp dues summary',
+          type: AppButtonType.outlined,
+          icon: Icons.chat_rounded,
+          onPressed: () async {
+            final rentOutstanding = data.charges
+                .where((c) => c.type == 'rent' && c.status != 'paid')
+                .map((c) => OutstandingRentMonth(
+                      billingMonth: c.month,
+                      duePaise: c.amountPaise,
+                    ))
+                .toList();
+
+            final payload = WhatsAppDuesSummaryPayload(
+              tenantName: data.name,
+              mobile: data.mobile,
+              outstandingRentMonths: rentOutstanding,
+              totalRentDuePaise: data.rentDuePaise,
+              totalElecDuePaise: data.elecDuePaise,
+            );
+
+            await WhatsAppService.shareDuesSummary(
+              context: context,
+              payload: payload,
+            );
+          },
+        ),
+        const SizedBox(height: 16),
 
         // Current month summary
         _SectionCard(
@@ -795,10 +1486,20 @@ class _OverviewTab extends StatelessWidget {
           child: Column(
             children: [
               _InfoRow('Mode', data.elecMode == 'meter' ? 'Meter-based' : data.elecMode == 'fixed' ? 'Fixed amount' : 'Not billed'),
-              if (data.elecMode == 'meter')
+              if (data.elecMode == 'meter') ...[
+                if (data.initialMeterReading != null)
+                  _InfoRow('Initial reading', '${data.initialMeterReading!.toStringAsFixed(1)} units'),
                 _InfoRow('Last reading', '${data.lastMeterReading.toStringAsFixed(1)} units'),
+              ],
             ],
           ),
+        ),
+        const SizedBox(height: 16),
+
+        // Notes & Remarks
+        _NotesSectionCard(
+          notes: data.notes,
+          onEdit: () => onEditNotes(data.notes),
         ),
         const SizedBox(height: 80), // FAB clearance
       ],
@@ -807,9 +1508,10 @@ class _OverviewTab extends StatelessWidget {
 }
 
 class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.title, required this.child});
+  const _SectionCard({required this.title, required this.child, this.action});
   final String title;
   final Widget child;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -823,8 +1525,14 @@ class _SectionCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-            child: Text(title, style: AppTextStyles.h3),
+            padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(title, style: AppTextStyles.h3),
+                if (action != null) action!,
+              ],
+            ),
           ),
           const Divider(height: 1),
           Padding(
@@ -981,6 +1689,316 @@ class _PaymentsTab extends StatelessWidget {
   }
 }
 
+// ── Meter readings tab ─────────────────────────────────────────────
+
+class _MeterTab extends StatelessWidget {
+  const _MeterTab({
+    required this.data,
+    required this.tenancyId,
+    required this.onRefresh,
+  });
+
+  final _ProfileData data;
+  final String tenancyId;
+  final Future<void> Function() onRefresh;
+
+  String _formatDate(String isoString) {
+    try {
+      final dt = DateTime.parse(isoString).toLocal();
+      return DateFormat('dd MMM yyyy, hh:mm a').format(dt);
+    } catch (_) {
+      return isoString;
+    }
+  }
+
+  String _formatMonth(String canonicalMonth) {
+    try {
+      final parts = canonicalMonth.split('-');
+      if (parts.length >= 2) {
+        final dt = DateTime(int.parse(parts[0]), int.parse(parts[1]), 1);
+        return DateFormat('MMMM yyyy').format(dt);
+      }
+    } catch (_) {}
+    return canonicalMonth;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasReadings = data.meterReadings.isNotEmpty;
+    final totalUnitsConsumed = data.meterReadings.fold<double>(
+      0.0,
+      (sum, item) => sum + item.unitsConsumed,
+    );
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        // 1. Meter configuration & baseline initialization card
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.warningBg,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.electric_meter_rounded, color: AppColors.warning, size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Electricity Meter Setup', style: AppTextStyles.h3),
+                        Text(
+                          data.elecMode == 'meter'
+                              ? 'Metered Billing (per-unit)'
+                              : data.elecMode == 'fixed'
+                                  ? 'Fixed monthly electricity'
+                                  : 'Electricity included in rent',
+                          style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  StatusChip(
+                    label: data.elecMode == 'meter' ? 'Meter-based' : 'Fixed',
+                    type: StatusChipType.neutral,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const Divider(height: 1),
+              const SizedBox(height: 12),
+
+              // Baseline / Initial reading details
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Initial Reading (Baseline)', style: AppTextStyles.captionBold.copyWith(color: AppColors.inkMuted)),
+                        const SizedBox(height: 4),
+                        Text(
+                          data.initialMeterReading != null
+                              ? '${data.initialMeterReading!.toStringAsFixed(1)} units'
+                              : '0.0 units',
+                          style: AppTextStyles.bodyMedium,
+                        ),
+                        if (data.initialReadingDate != null && data.initialReadingDate!.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            'Initialized: ${_formatDate(data.initialReadingDate!)}',
+                            style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted, fontSize: 11),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Latest Reading', style: AppTextStyles.captionBold.copyWith(color: AppColors.inkMuted)),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${data.lastMeterReading.toStringAsFixed(1)} units',
+                          style: AppTextStyles.bodyMedium,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Total consumed: ${totalUnitsConsumed.toStringAsFixed(1)} units',
+                          style: AppTextStyles.caption.copyWith(color: AppColors.action, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // Action button to record new reading
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () async {
+                    await context.pushNamed(
+                      'meter-reading',
+                      pathParameters: {'tenancyId': tenancyId},
+                    );
+                    await onRefresh();
+                  },
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  label: const Text('Record Meter Reading'),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // 2. Meter Readings History
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Meter Readings History', style: AppTextStyles.h3),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceVariant,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '${data.meterReadings.length} records',
+                style: AppTextStyles.captionBold.copyWith(color: AppColors.inkMuted),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        if (!hasReadings)
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Column(
+              children: [
+                const Icon(Icons.speed_rounded, size: 40, color: AppColors.inkMuted),
+                const SizedBox(height: 12),
+                Text('No meter readings recorded yet', style: AppTextStyles.bodyMedium),
+                const SizedBox(height: 4),
+                Text(
+                  'Record monthly electricity readings to calculate consumption and dues automatically.',
+                  style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          )
+        else
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: data.meterReadings.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (_, i) {
+              final item = data.meterReadings[i];
+              return Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.calendar_month_outlined, size: 16, color: AppColors.action),
+                            const SizedBox(width: 6),
+                            Text(
+                              _formatMonth(item.billingMonth),
+                              style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppColors.warningBg,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '+${item.unitsConsumed.toStringAsFixed(1)} units',
+                            style: AppTextStyles.captionBold.copyWith(color: AppColors.warning),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Added: ${_formatDate(item.createdAt)}',
+                      style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                    ),
+                    const SizedBox(height: 8),
+                    const Divider(height: 1),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Previous → Current', style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted)),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${item.previousReading.toStringAsFixed(1)} → ${item.currentReading.toStringAsFixed(1)}',
+                              style: AppTextStyles.bodyRegular,
+                            ),
+                          ],
+                        ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              CurrencyFormatter.fromPaise(item.amountPaise),
+                              style: AppTextStyles.currencySmall.copyWith(color: AppColors.action),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '@ ₹${(item.ratePaise / 100.0).toStringAsFixed(2)} / unit',
+                              style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    if (item.notes != null && item.notes!.trim().isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: AppColors.canvas,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          item.notes!,
+                          style: AppTextStyles.caption.copyWith(fontStyle: FontStyle.italic),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        const SizedBox(height: 80),
+      ],
+    );
+  }
+}
+
 // ── Details tab ───────────────────────────────────────────────────
 
 class _DetailsTab extends StatelessWidget {
@@ -988,24 +2006,77 @@ class _DetailsTab extends StatelessWidget {
     required this.data,
     required this.tenancyId,
     required this.onToggleLogin,
+    required this.onEditNotes,
+    required this.onEditTenant,
   });
   final _ProfileData data;
   final String tenancyId;
   final void Function(bool) onToggleLogin;
+  final void Function(String?) onEditNotes;
+  final VoidCallback onEditTenant;
 
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        Card(
+          elevation: 0,
+          color: AppColors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: const BorderSide(color: AppColors.border),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.action.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.manage_accounts_rounded, color: AppColors.action, size: 24),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Tenant Information', style: AppTextStyles.h3.copyWith(fontSize: 16)),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Update status, name, mobile, email, rent, or tenancy dates.',
+                        style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.tonalIcon(
+                  onPressed: onEditTenant,
+                  icon: const Icon(Icons.edit_rounded, size: 16),
+                  label: const Text('Edit Details'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
         _SectionCard(
           title: 'Tenancy details',
+          action: IconButton(
+            icon: const Icon(Icons.edit_outlined, size: 18, color: AppColors.action),
+            tooltip: 'Edit details',
+            onPressed: onEditTenant,
+          ),
           child: Column(
             children: [
               _InfoRow('Unit ID', data.unitId),
               _InfoRow('Tenant type', data.type),
               _InfoRow('Start date', data.startDate),
-              _InfoRow('Status', data.isActive ? 'Active' : 'Inactive'),
+              _InfoRow('Status', data.isActive ? 'Active' : 'Inactive / Left'),
             ],
           ),
         ),
@@ -1019,6 +2090,11 @@ class _DetailsTab extends StatelessWidget {
               if (data.email != null) _InfoRow('Email', data.email!),
             ],
           ),
+        ),
+        const SizedBox(height: 16),
+        _NotesSectionCard(
+          notes: data.notes,
+          onEdit: () => onEditNotes(data.notes),
         ),
         const SizedBox(height: 16),
         _SectionCard(
@@ -1074,14 +2150,120 @@ class _DetailsTab extends StatelessWidget {
   }
 }
 
-// ── Placeholder data ──────────────────────────────────────────────
+// ── Notes card ────────────────────────────────────────────────────
+
+class _NotesSectionCard extends StatelessWidget {
+  const _NotesSectionCard({
+    required this.notes,
+    required this.onEdit,
+  });
+  final String? notes;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasNotes = notes != null && notes!.trim().isNotEmpty;
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.note_alt_outlined, size: 18, color: AppColors.action),
+                    const SizedBox(width: 8),
+                    Text('Notes & Remarks', style: AppTextStyles.h3),
+                  ],
+                ),
+                TextButton.icon(
+                  onPressed: onEdit,
+                  icon: Icon(hasNotes ? Icons.edit_outlined : Icons.add_rounded, size: 16),
+                  label: Text(hasNotes ? 'Edit' : 'Add Note', style: const TextStyle(fontSize: 13)),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: hasNotes
+                ? Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFFBEB),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFFDE68A)),
+                    ),
+                    child: Text(
+                      notes!,
+                      style: AppTextStyles.bodyRegular.copyWith(
+                        color: const Color(0xFF92400E),
+                        height: 1.4,
+                      ),
+                    ),
+                  )
+                : Text(
+                    'No remarks or notes recorded for this tenancy yet. Tap "Add Note" to write one.',
+                    style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Profile data models ──────────────────────────────────────────
+
+class _MeterReadingItem {
+  final String id;
+  final String billingMonth;
+  final double previousReading;
+  final double currentReading;
+  final double unitsConsumed;
+  final int ratePaise;
+  final int amountPaise;
+  final bool isCorrected;
+  final String? notes;
+  final String createdAt;
+
+  const _MeterReadingItem({
+    required this.id,
+    required this.billingMonth,
+    required this.previousReading,
+    required this.currentReading,
+    required this.unitsConsumed,
+    required this.ratePaise,
+    required this.amountPaise,
+    this.isCorrected = false,
+    this.notes,
+    required this.createdAt,
+  });
+}
 
 class _ProfileData {
   final String name, mobile, unitId, type, billingMonth, rentEffectiveFrom, startDate, elecMode, elecStatus;
-  final String? email;
+  final String? email, notes;
   final bool isActive, loginEnabled;
   final int rentDuePaise, elecDuePaise, advanceBalancePaise, currentRentPaise, currentElecPaise, paymentsThisMonthPaise;
   final double lastMeterReading;
+  final double? initialMeterReading;
+  final String? initialReadingDate;
+  final List<_MeterReadingItem> meterReadings;
   final List<_ChargeItem> charges;
   final List<_PaymentItem> payments;
 
@@ -1089,32 +2271,73 @@ class _ProfileData {
     required this.name, required this.mobile, required this.unitId,
     required this.type, required this.billingMonth, required this.rentEffectiveFrom,
     required this.startDate, required this.elecMode, required this.elecStatus,
-    this.email, required this.isActive, required this.loginEnabled,
+    this.email, this.notes, required this.isActive, required this.loginEnabled,
     required this.rentDuePaise, required this.elecDuePaise, required this.advanceBalancePaise,
     required this.currentRentPaise, required this.currentElecPaise, required this.paymentsThisMonthPaise,
-    required this.lastMeterReading, required this.charges, required this.payments,
+    required this.lastMeterReading,
+    this.initialMeterReading,
+    this.initialReadingDate,
+    this.meterReadings = const [],
+    required this.charges, required this.payments,
   });
 
-  int get totalDuePaise => rentDuePaise + elecDuePaise;
+  _ProfileData copyWith({
+    String? name,
+    String? mobile,
+    String? unitId,
+    String? type,
+    String? billingMonth,
+    String? rentEffectiveFrom,
+    String? startDate,
+    String? elecMode,
+    String? elecStatus,
+    String? email,
+    String? notes,
+    bool? isActive,
+    bool? loginEnabled,
+    int? rentDuePaise,
+    int? elecDuePaise,
+    int? advanceBalancePaise,
+    int? currentRentPaise,
+    int? currentElecPaise,
+    int? paymentsThisMonthPaise,
+    double? lastMeterReading,
+    double? initialMeterReading,
+    String? initialReadingDate,
+    List<_MeterReadingItem>? meterReadings,
+    List<_ChargeItem>? charges,
+    List<_PaymentItem>? payments,
+  }) {
+    return _ProfileData(
+      name: name ?? this.name,
+      mobile: mobile ?? this.mobile,
+      unitId: unitId ?? this.unitId,
+      type: type ?? this.type,
+      billingMonth: billingMonth ?? this.billingMonth,
+      rentEffectiveFrom: rentEffectiveFrom ?? this.rentEffectiveFrom,
+      startDate: startDate ?? this.startDate,
+      elecMode: elecMode ?? this.elecMode,
+      elecStatus: elecStatus ?? this.elecStatus,
+      email: email ?? this.email,
+      notes: notes ?? this.notes,
+      isActive: isActive ?? this.isActive,
+      loginEnabled: loginEnabled ?? this.loginEnabled,
+      rentDuePaise: rentDuePaise ?? this.rentDuePaise,
+      elecDuePaise: elecDuePaise ?? this.elecDuePaise,
+      advanceBalancePaise: advanceBalancePaise ?? this.advanceBalancePaise,
+      currentRentPaise: currentRentPaise ?? this.currentRentPaise,
+      currentElecPaise: currentElecPaise ?? this.currentElecPaise,
+      paymentsThisMonthPaise: paymentsThisMonthPaise ?? this.paymentsThisMonthPaise,
+      lastMeterReading: lastMeterReading ?? this.lastMeterReading,
+      initialMeterReading: initialMeterReading ?? this.initialMeterReading,
+      initialReadingDate: initialReadingDate ?? this.initialReadingDate,
+      meterReadings: meterReadings ?? this.meterReadings,
+      charges: charges ?? this.charges,
+      payments: payments ?? this.payments,
+    );
+  }
 
-  factory _ProfileData.placeholder(String id) => _ProfileData(
-    name: 'Priya Sharma', mobile: '91234 56789', unitId: 'Room 07',
-    type: 'Room', billingMonth: 'October 2026', rentEffectiveFrom: '01 Jan 2025',
-    startDate: '01 Jan 2025', elecMode: 'meter', elecStatus: 'Awaiting reading', email: 'priya@example.com',
-    isActive: true, loginEnabled: true, rentDuePaise: 550000, elecDuePaise: 135000,
-    advanceBalancePaise: 1100000, currentRentPaise: 550000, currentElecPaise: 135000,
-    paymentsThisMonthPaise: 0, lastMeterReading: 1450.5,
-    charges: const [
-      _ChargeItem(label: 'Rent', month: 'Oct 2026', amountPaise: 550000, type: 'rent', status: 'pending'),
-      _ChargeItem(label: 'Electricity', month: 'Oct 2026', amountPaise: 135000, type: 'electricity', status: 'pending'),
-      _ChargeItem(label: 'Rent', month: 'Sep 2026', amountPaise: 550000, type: 'rent', status: 'paid'),
-      _ChargeItem(label: 'Electricity', month: 'Sep 2026', amountPaise: 98000, type: 'electricity', status: 'paid'),
-    ],
-    payments: const [
-      _PaymentItem(date: '02 Sep 2026', amountPaise: 648000, method: 'Cash', reference: null),
-      _PaymentItem(date: '05 Aug 2026', amountPaise: 648000, method: 'Online', reference: 'UPI/1234567'),
-    ],
-  );
+  int get totalDuePaise => rentDuePaise + elecDuePaise;
 }
 
 class _ChargeItem {
@@ -1331,6 +2554,7 @@ Future<void> _sendWhatsAppDuesSummary(
       totalElecDuePaise: totalElecDuePaise,
     );
 
+    if (!context.mounted) return;
     await WhatsAppService.shareDuesSummary(context: context, payload: payload);
   } catch (e) {
     if (context.mounted) {
