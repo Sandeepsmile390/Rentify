@@ -119,7 +119,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     } else if (cleanDigits.length == 10 && !identifier.contains('@')) {
       // 2. Tenant Mobile Number Login: Lookup account email securely via RPC
       final cleanPassDigits = password.replaceAll(RegExp(r'\D'), '');
-      if (password.isEmpty || cleanPassDigits == cleanDigits) {
+      if (password.isEmpty ||
+          cleanPassDigits == cleanDigits ||
+          (cleanPassDigits.length >= 10 &&
+              cleanPassDigits.substring(cleanPassDigits.length - 10) == cleanDigits)) {
         password = cleanDigits;
         _passwordController.text = cleanDigits;
       }
@@ -149,10 +152,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
     try {
       // Live Supabase Authentication
-      final res = await Supabase.instance.client.auth.signInWithPassword(
-        email: loginEmail,
-        password: password,
-      );
+      AuthResponse res;
+      try {
+        res = await Supabase.instance.client.auth.signInWithPassword(
+          email: loginEmail,
+          password: password,
+        );
+      } catch (firstErr) {
+        // Fallback for mobile logins: if user entered a custom password that failed, try default mobile number password
+        if (cleanDigits.length == 10 && !identifier.contains('@') && password != cleanDigits) {
+          res = await Supabase.instance.client.auth.signInWithPassword(
+            email: loginEmail,
+            password: cleanDigits,
+          );
+        } else {
+          rethrow;
+        }
+      }
 
       if (!mounted) return;
 
