@@ -107,7 +107,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
     final identifier = _emailController.text.trim();
     final idLower = identifier.toLowerCase();
-    final cleanDigits = identifier.replaceAll(RegExp(r'\D'), '');
+    final rawDigits = identifier.replaceAll(RegExp(r'\D'), '');
+    final cleanDigits = rawDigits.length >= 10 ? rawDigits.substring(rawDigits.length - 10) : rawDigits;
     var password = _passwordController.text;
 
     String loginEmail = identifier;
@@ -115,9 +116,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     // 1. Admin ID: sandeepsmile390 or admin@rentify.app
     if (idLower == 'sandeepsmile390' || idLower == 'admin@rentify.app') {
       loginEmail = 'sandeepsmile390@rentify.app';
-    } else if (cleanDigits.length >= 10 && !identifier.contains('@')) {
+    } else if (cleanDigits.length == 10 && !identifier.contains('@')) {
       // 2. Tenant Mobile Number Login: Lookup account email securely via RPC
-      if (password.isEmpty) {
+      final cleanPassDigits = password.replaceAll(RegExp(r'\D'), '');
+      if (password.isEmpty || cleanPassDigits == cleanDigits) {
         password = cleanDigits;
         _passwordController.text = cleanDigits;
       }
@@ -139,7 +141,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         }
       } catch (e) {
         setState(() {
-          _errorMessage = 'Unable to resolve mobile account. Please verify your mobile number or check network.';
+          _errorMessage = 'Unable to resolve mobile account. Please verify your mobile number or check network: $e';
         });
         return;
       }

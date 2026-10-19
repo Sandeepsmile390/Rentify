@@ -28,6 +28,7 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabCtrl;
   bool _isLoading = true;
+  String? _errorMessage;
   _ProfileData? _data;
 
   @override
@@ -60,7 +61,8 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
         if (!mounted) return;
         setState(() {
           _isLoading = false;
-          _data = _ProfileData.placeholder(widget.tenancyId);
+          _errorMessage = 'Tenancy not found in database.';
+          _data = null;
         });
         return;
       }
@@ -287,7 +289,8 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _data = _ProfileData.placeholder(widget.tenancyId);
+        _errorMessage = 'Failed to load tenant profile: $e';
+        _data = null;
       });
     }
   }
@@ -328,13 +331,38 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
       backgroundColor: AppColors.canvas,
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : NestedScrollView(
-              headerSliverBuilder: (ctx, _) => [
-                _ProfileAppBar(
-                  data: _data!,
-                  tenancyId: widget.tenancyId,
-                  onRefresh: _load,
-                ),
+          : _data == null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.error_outline_rounded, size: 48, color: AppColors.error),
+                        const SizedBox(height: 16),
+                        Text('Tenant record not found', style: AppTextStyles.h3),
+                        const SizedBox(height: 8),
+                        Text(
+                          _errorMessage ?? 'This tenancy does not exist or was deleted.',
+                          style: AppTextStyles.bodyRegular,
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 24),
+                        FilledButton(
+                          onPressed: () => Navigator.of(context).maybePop(),
+                          child: const Text('Back'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : NestedScrollView(
+                  headerSliverBuilder: (ctx, _) => [
+                    _ProfileAppBar(
+                      data: _data!,
+                      tenancyId: widget.tenancyId,
+                      onRefresh: _load,
+                    ),
                 _FinancialSummaryBar(data: _data!, isWide: isWide),
                 _TabBar(controller: _tabCtrl),
               ],
