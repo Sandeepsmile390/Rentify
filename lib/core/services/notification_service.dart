@@ -1,6 +1,17 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+@pragma('vm:entry-point')
+void notificationTapBackground(NotificationResponse notificationResponse) {
+  final payload = notificationResponse.payload;
+  if (payload != null && payload.isNotEmpty) {
+    try {
+      launchUrl(Uri.parse(payload), mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+}
 
 class NotificationService {
   static bool _hasPrompted = false;
@@ -49,7 +60,34 @@ class NotificationService {
         macOS: darwinSettings,
       );
 
-      await _localNotifications.initialize(settings: initSettings);
+      await _localNotifications.initialize(
+        settings: initSettings,
+        onDidReceiveNotificationResponse: (NotificationResponse response) async {
+          final payload = response.payload;
+          if (payload != null && payload.isNotEmpty) {
+            try {
+              final uri = Uri.parse(payload);
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+            } catch (e) {
+              debugPrint('Error launching notification payload URL: $e');
+            }
+          }
+        },
+        onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
+      );
+
+      final launchDetails = await _localNotifications.getNotificationAppLaunchDetails();
+      if (launchDetails != null && launchDetails.didNotificationLaunchApp) {
+        final payload = launchDetails.notificationResponse?.payload;
+        if (payload != null && payload.isNotEmpty) {
+          try {
+            final uri = Uri.parse(payload);
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          } catch (e) {
+            debugPrint('Error launching notification launch payload URL: $e');
+          }
+        }
+      }
       _isLocalNotificationsInitialized = true;
     } catch (e) {
       debugPrint('Local notifications init error: $e');
@@ -69,16 +107,32 @@ class NotificationService {
         await _initPlugin();
       }
 
-      const androidDetails = AndroidNotificationDetails(
+      final isUpdate = payload != null &&
+          (payload.endsWith('.apk') ||
+              payload.contains('raw.githubusercontent.com') ||
+              payload.contains('drive.google.com') ||
+              title.toLowerCase().contains('update'));
+
+      final androidDetails = AndroidNotificationDetails(
         'rentify_alerts_channel',
         'Rentify Alerts & Notices',
         channelDescription: 'Important updates, billing alerts, and rent receipts',
         importance: Importance.high,
         priority: Priority.high,
         showWhen: true,
+        actions: isUpdate
+            ? <AndroidNotificationAction>[
+                const AndroidNotificationAction(
+                  'download_install_action',
+                  'Download & Install',
+                  showsUserInterface: true,
+                  cancelNotification: true,
+                ),
+              ]
+            : null,
       );
       const darwinDetails = DarwinNotificationDetails();
-      const details = NotificationDetails(
+      final details = NotificationDetails(
         android: androidDetails,
         iOS: darwinDetails,
       );

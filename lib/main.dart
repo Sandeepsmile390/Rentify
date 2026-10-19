@@ -8,6 +8,7 @@ import 'core/routing/app_router.dart';
 import 'core/routing/routes.dart';
 import 'core/services/biometric_service.dart';
 import 'core/services/notification_service.dart';
+import 'core/services/update_service.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_text_styles.dart';
 import 'core/theme/app_theme.dart';
@@ -47,6 +48,8 @@ class _RentifyAppState extends ConsumerState<RentifyApp> with WidgetsBindingObse
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       NotificationService.initializeAndPrompt();
+      UpdateService.initializeRealtimeUpdates();
+      UpdateService.checkAndNotifySystemTray();
       _checkInitialBiometricLock();
     });
   }

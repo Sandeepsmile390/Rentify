@@ -93,6 +93,12 @@ class _NotificationCenterScreenState
         final rawTitle = (r['title'] as String?) ?? 'Notice';
         final isDbRead = (r['is_read'] as bool?) ?? (r['read'] as bool?) ?? false;
 
+        final meta = r['metadata'] as Map<String, dynamic>?;
+        final apkUrl = meta?['apk_url']?.toString() ??
+            ((r['category'] == 'app_update' || rawTitle.toLowerCase().contains('update'))
+                ? UpdateService.defaultApkUrl
+                : null);
+
         return _NotifItem(
           id: id,
           category: (r['category'] as String?) ?? 'system',
@@ -100,6 +106,7 @@ class _NotificationCenterScreenState
           body: rawBody,
           timeAgo: timeAgo,
           isRead: isDbRead || readIds.contains(id),
+          actionUrl: apkUrl,
         );
       }).toList();
 

@@ -1,13 +1,16 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../config/env.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
+import 'notification_service.dart';
 
 class UpdateService {
-  static const String currentAppVersion = '1.1.0+3';
+  static String get currentAppVersion => Env.appVersion;
   static const String defaultApkUrl =
       'https://raw.githubusercontent.com/Sandeepsmile390/Apk/main/app-release.apk';
 
@@ -25,21 +28,114 @@ class UpdateService {
         {'key': 'app_release_notes', 'value': notes},
       ], onConflict: 'key');
 
-      // Create live broadcast notification in notifications table
+      // Create live broadcast notification in notifications table for all users
       await client.from('notifications').insert({
-        'title': 'New Update v$version Available',
+        'id': 'update-${DateTime.now().millisecondsSinceEpoch}',
+        'title': '🚀 New Update v$version Available',
         'message': notes.isNotEmpty
             ? notes
             : 'A new update is available. Download and install now for the latest features and bug fixes.',
-        'type': 'app_update',
+        'body': notes.isNotEmpty
+            ? notes
+            : 'A new update is available. Download and install now for the latest features and bug fixes.',
+        'category': 'app_update',
+        'for_role': 'all',
         'is_read': false,
+        'read': false,
         'metadata': {'apk_url': apkUrl, 'version': version},
       });
+
+      // Also trigger phone system tray notification immediately on this device
+      await NotificationService.showSystemNotification(
+        id: 9999,
+        title: '🚀 Rentify Update v$version Available',
+        body: 'New version ready! Tap to download and install update instantly.',
+        payload: apkUrl,
+      );
 
       return true;
     } catch (e) {
       debugPrint('Error broadcasting update: $e');
       return false;
+    }
+  }
+
+  /// Checks silently and posts to device notification tray if a new version is available
+  static Future<void> checkAndNotifySystemTray() async {
+    if (kIsWeb) return;
+    try {
+      final client = Supabase.instance.client;
+      final res = await client
+          .from('system_settings')
+          .select('key, value')
+          .inFilter('key', ['app_version', 'apk_download_url', 'app_release_notes']);
+
+      final Map<String, String> settings = {};
+      for (final r in (res as List<dynamic>)) {
+        settings[r['key'].toString()] = r['value']?.toString() ?? '';
+      }
+
+      final latestVer = settings['app_version'] ?? currentAppVersion;
+      final apkUrl = (settings['apk_download_url'] != null && settings['apk_download_url']!.isNotEmpty)
+          ? settings['apk_download_url']!
+          : defaultApkUrl;
+
+      if (_isNewerVersion(latestVer, currentAppVersion)) {
+        await NotificationService.showSystemNotification(
+          id: 9999,
+          title: '🚀 Rentify Update v$latestVer Available',
+          body: 'New version ready! Tap to download and install update instantly.',
+          payload: apkUrl,
+        );
+      }
+    } catch (e) {
+      debugPrint('Error in checkAndNotifySystemTray: $e');
+    }
+  }
+
+  /// Sets up real-time listener for incoming broadcast updates while app is open
+  static void initializeRealtimeUpdates() {
+    if (kIsWeb) return;
+    try {
+      final client = Supabase.instance.client;
+      client
+          .channel('public:system_settings_updates')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'system_settings',
+            callback: (_) => checkAndNotifySystemTray(),
+          )
+          .subscribe();
+
+      client
+          .channel('public:notifications_broadcast')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.insert,
+            schema: 'public',
+            table: 'notifications',
+            callback: (payload) {
+              final newRecord = payload.newRecord;
+              final cat = newRecord['category']?.toString();
+              final type = newRecord['type']?.toString();
+              final title = newRecord['title']?.toString() ?? 'Notice';
+              final body = newRecord['body']?.toString() ?? newRecord['message']?.toString() ?? '';
+              final meta = newRecord['metadata'] as Map<String, dynamic>?;
+              final apkUrl = meta?['apk_url']?.toString() ?? defaultApkUrl;
+
+              if (cat == 'app_update' || type == 'app_update' || title.toLowerCase().contains('update')) {
+                NotificationService.showSystemNotification(
+                  id: 9999,
+                  title: title,
+                  body: '$body\nTap to download and install instantly.',
+                  payload: apkUrl,
+                );
+              }
+            },
+          )
+          .subscribe();
+    } catch (e) {
+      debugPrint('Error subscribing to realtime updates: $e');
     }
   }
 
@@ -64,6 +160,14 @@ class UpdateService {
       final notes = settings['app_release_notes'] ?? 'General performance improvements and bug fixes.';
 
       if (_isNewerVersion(latestVer, currentAppVersion)) {
+        // Trigger system tray notification on phone with Download & Install action button
+        await NotificationService.showSystemNotification(
+          id: 9999,
+          title: '🚀 Rentify Update v$latestVer Available',
+          body: 'New version ready! Tap to download and install update instantly.',
+          payload: apkUrl,
+        );
+
         // Broadcast app update: only show modal popup once per version
         final prefs = await SharedPreferences.getInstance();
         final promptedKey = 'has_shown_update_popup_$latestVer';
@@ -77,7 +181,7 @@ class UpdateService {
         }
       } else if (isManual && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text('You are on the latest version ($currentAppVersion).'),
             backgroundColor: AppColors.success,
           ),
