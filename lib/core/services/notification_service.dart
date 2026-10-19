@@ -1,16 +1,24 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class NotificationService {
   static bool _hasPrompted = false;
+  static bool _isLocalNotificationsInitialized = false;
+  static final FlutterLocalNotificationsPlugin _localNotifications =
+      FlutterLocalNotificationsPlugin();
 
-  /// Prompts the user for notification permissions on app launch.
-  /// Works across Android (POST_NOTIFICATIONS) and Web (Notification.requestPermission).
+  /// Prompts the user for notification permissions on app launch and initializes local notification channels.
+  /// Works across Android (POST_NOTIFICATIONS) and Web.
   static Future<bool> initializeAndPrompt() async {
     if (_hasPrompted) return true;
     _hasPrompted = true;
 
     try {
+      if (!kIsWeb) {
+        await _initPlugin();
+      }
+
       if (kIsWeb) {
         final status = await Permission.notification.request();
         debugPrint('Web notification permission status: $status');
@@ -30,6 +38,63 @@ class NotificationService {
     }
   }
 
+  static Future<void> _initPlugin() async {
+    if (_isLocalNotificationsInitialized || kIsWeb) return;
+    try {
+      const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const darwinSettings = DarwinInitializationSettings();
+      const initSettings = InitializationSettings(
+        android: androidSettings,
+        iOS: darwinSettings,
+        macOS: darwinSettings,
+      );
+
+      await _localNotifications.initialize(settings: initSettings);
+      _isLocalNotificationsInitialized = true;
+    } catch (e) {
+      debugPrint('Local notifications init error: $e');
+    }
+  }
+
+  /// Displays an actionable notification on the phone's notification panel / shade.
+  static Future<void> showSystemNotification({
+    required int id,
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    if (kIsWeb) return;
+    try {
+      if (!_isLocalNotificationsInitialized) {
+        await _initPlugin();
+      }
+
+      const androidDetails = AndroidNotificationDetails(
+        'rentify_alerts_channel',
+        'Rentify Alerts & Notices',
+        channelDescription: 'Important updates, billing alerts, and rent receipts',
+        importance: Importance.high,
+        priority: Priority.high,
+        showWhen: true,
+      );
+      const darwinDetails = DarwinNotificationDetails();
+      const details = NotificationDetails(
+        android: androidDetails,
+        iOS: darwinDetails,
+      );
+
+      await _localNotifications.show(
+        id: id,
+        title: title,
+        body: body,
+        notificationDetails: details,
+        payload: payload,
+      );
+    } catch (e) {
+      debugPrint('Failed to show system notification: $e');
+    }
+  }
+
   /// Checks if notification permission is currently granted.
   static Future<bool> isPermissionGranted() async {
     try {
@@ -44,6 +109,9 @@ class NotificationService {
   static Future<bool> requestPermission() async {
     try {
       final res = await Permission.notification.request();
+      if (res.isGranted && !kIsWeb) {
+        await _initPlugin();
+      }
       return res.isGranted;
     } catch (e) {
       debugPrint('Error in requestPermission: $e');

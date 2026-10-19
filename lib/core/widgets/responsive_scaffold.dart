@@ -140,7 +140,6 @@ class _SideNav extends StatelessWidget {
 
 class _SideNavItem extends ConsumerWidget {
   const _SideNavItem({
-    super.key,
     required this.item,
     required this.selected,
     this.isLogout = false,
@@ -346,5 +345,11 @@ const _tenantNavItems = [
     activeIcon: Icons.folder_rounded,
     label: 'Docs',
     path: Routes.tenantDocuments,
+  ),
+  _NavItem(
+    icon: Icons.badge_outlined,
+    activeIcon: Icons.badge_rounded,
+    label: 'Details',
+    path: Routes.tenantDetails,
   ),
 ];

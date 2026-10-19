@@ -99,6 +99,7 @@ class _TenantDirectoryScreenState
           mobile: (t['mobile'] as String?) ?? '',
           rentDuePaise: rentDueByTenancy[tId] ?? 0,
           elecDuePaise: elecDueByTenancy[tId] ?? 0,
+          isActive: (t['is_active'] as bool?) ?? true,
         );
       }).toList();
 
@@ -125,9 +126,13 @@ class _TenantDirectoryScreenState
           t.mobile.contains(q);
       final matchesType = _filterType == 'all' ||
           t.type.toLowerCase() == _filterType;
-      final matchesStatus = _filterStatus == 'all' ||
-          (_filterStatus == 'dues' && t.totalDuePaise > 0) ||
-          (_filterStatus == 'clear' && t.totalDuePaise == 0);
+      final matchesStatus = switch (_filterStatus) {
+        'active' => t.isActive,
+        'vacated' => !t.isActive,
+        'dues' => t.totalDuePaise > 0,
+        'clear' => t.totalDuePaise == 0,
+        _ => true,
+      };
       return matchesSearch && matchesType && matchesStatus;
     }).toList();
   }
@@ -177,23 +182,39 @@ class _TenantDirectoryScreenState
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
-                : _filtered.isEmpty
-                    ? _EmptyState(hasFilter: _searchQuery.isNotEmpty || _filterType != 'all' || _filterStatus != 'all')
-                    : isWide
-                        ? _TenantTable(
-                            tenants: _filtered,
-                            onRefresh: () {
-                              setState(() => _isLoading = true);
-                              _load();
-                            },
+                : RefreshIndicator(
+                    onRefresh: _load,
+                    child: _filtered.isEmpty
+                        ? SingleChildScrollView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            child: SizedBox(
+                              height: 400,
+                              child: _EmptyState(
+                                hasFilter: _searchQuery.isNotEmpty ||
+                                    _filterType != 'all' ||
+                                    _filterStatus != 'all',
+                              ),
+                            ),
                           )
-                        : _TenantList(
-                            tenants: _filtered,
-                            onRefresh: () {
-                              setState(() => _isLoading = true);
-                              _load();
-                            },
-                          ),
+                        : isWide
+                            ? SingleChildScrollView(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                child: _TenantTable(
+                                  tenants: _filtered,
+                                  onRefresh: () {
+                                    setState(() => _isLoading = true);
+                                    _load();
+                                  },
+                                ),
+                              )
+                            : _TenantList(
+                                tenants: _filtered,
+                                onRefresh: () {
+                                  setState(() => _isLoading = true);
+                                  _load();
+                                },
+                              ),
+                  ),
           ),
         ],
       ),
@@ -239,28 +260,52 @@ class _FilterBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          _FilterChip(
-            label: 'All',
-            selected: filterType == 'all',
-            onTap: () => onTypeChanged('all'),
-          ),
-          _FilterChip(
-            label: 'Rooms',
-            selected: filterType == 'room',
-            onTap: () => onTypeChanged('room'),
-          ),
-          _FilterChip(
-            label: 'Shops',
-            selected: filterType == 'shop',
-            onTap: () => onTypeChanged('shop'),
-          ),
-          const SizedBox(width: 4),
-          _FilterChip(
-            label: 'Dues',
-            selected: filterStatus == 'dues',
-            onTap: () => onStatusChanged(filterStatus == 'dues' ? 'all' : 'dues'),
-            selectedColor: AppColors.errorBg,
-            selectedTextColor: AppColors.error,
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _FilterChip(
+                  label: 'All',
+                  selected: filterType == 'all' && filterStatus == 'all',
+                  onTap: () {
+                    onTypeChanged('all');
+                    onStatusChanged('all');
+                  },
+                ),
+                _FilterChip(
+                  label: 'Active',
+                  selected: filterStatus == 'active',
+                  onTap: () => onStatusChanged(filterStatus == 'active' ? 'all' : 'active'),
+                  selectedColor: AppColors.successBg,
+                  selectedTextColor: AppColors.success,
+                ),
+                _FilterChip(
+                  label: 'Vacated / Left',
+                  selected: filterStatus == 'vacated',
+                  onTap: () => onStatusChanged(filterStatus == 'vacated' ? 'all' : 'vacated'),
+                  selectedColor: AppColors.surfaceVariant,
+                  selectedTextColor: AppColors.inkMuted,
+                ),
+                _FilterChip(
+                  label: 'Dues',
+                  selected: filterStatus == 'dues',
+                  onTap: () => onStatusChanged(filterStatus == 'dues' ? 'all' : 'dues'),
+                  selectedColor: AppColors.errorBg,
+                  selectedTextColor: AppColors.error,
+                ),
+                _FilterChip(
+                  label: 'Rooms',
+                  selected: filterType == 'room',
+                  onTap: () => onTypeChanged(filterType == 'room' ? 'all' : 'room'),
+                ),
+                _FilterChip(
+                  label: 'Shops',
+                  selected: filterType == 'shop',
+                  onTap: () => onTypeChanged(filterType == 'shop' ? 'all' : 'shop'),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -419,7 +464,36 @@ class _TableRow extends StatelessWidget {
             Expanded(
               flex: 3,
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(tenant.name, style: AppTextStyles.bodyMedium),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        tenant.name,
+                        style: AppTextStyles.bodyMedium,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (!tenant.isActive) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceVariant,
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: AppColors.border, width: 0.8),
+                        ),
+                        child: const Text(
+                          'Left / Vacated',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.inkMuted,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
                 Text(tenant.type, style: AppTextStyles.caption),
               ]),
             ),
@@ -455,10 +529,15 @@ class _TableRow extends StatelessWidget {
             ),
             Expanded(
               flex: 1,
-              child: StatusChip(
-                label: hasDues ? 'Dues' : 'Clear',
-                type: hasDues ? StatusChipType.error : StatusChipType.success,
-              ),
+              child: !tenant.isActive
+                  ? StatusChip(
+                      label: hasDues ? 'Left (Dues)' : 'Vacated',
+                      type: hasDues ? StatusChipType.error : StatusChipType.neutral,
+                    )
+                  : StatusChip(
+                      label: hasDues ? 'Dues' : 'Clear',
+                      type: hasDues ? StatusChipType.error : StatusChipType.success,
+                    ),
             ),
             SizedBox(
               width: 40,
@@ -526,6 +605,7 @@ class _TenantList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView.separated(
+      physics: const AlwaysScrollableScrollPhysics(),
       itemCount: tenants.length,
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (ctx, i) => _MobileTenantTile(tenant: tenants[i], onRefresh: onRefresh),
@@ -545,17 +625,59 @@ class _MobileTenantTile extends StatelessWidget {
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       leading: CircleAvatar(
         radius: 20,
-        backgroundColor: hasDues ? AppColors.errorBg : AppColors.actionBg,
+        backgroundColor: !tenant.isActive
+            ? AppColors.surfaceVariant
+            : hasDues
+                ? AppColors.errorBg
+                : AppColors.actionBg,
         child: Text(
           tenant.name.isNotEmpty ? tenant.name[0].toUpperCase() : '?',
           style: TextStyle(
-            color: hasDues ? AppColors.error : AppColors.action,
+            color: !tenant.isActive
+                ? AppColors.inkMuted
+                : hasDues
+                    ? AppColors.error
+                    : AppColors.action,
             fontWeight: FontWeight.w700,
           ),
         ),
       ),
-      title: Text(tenant.name, style: AppTextStyles.bodyMedium),
-      subtitle: Text('${tenant.unit} · ${tenant.mobile}', style: AppTextStyles.caption),
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(
+              tenant.name,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: tenant.isActive ? AppColors.ink : AppColors.inkMuted,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (!tenant.isActive) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceVariant,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: AppColors.border, width: 0.8),
+              ),
+              child: const Text(
+                'Vacated',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.inkMuted,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+      subtitle: Text(
+        '${tenant.unit} · ${tenant.mobile}${tenant.isActive ? '' : ' · (Inactive)'}',
+        style: AppTextStyles.caption,
+      ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -571,10 +693,16 @@ class _MobileTenantTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 4),
-              StatusChip(
-                label: hasDues ? 'Dues' : 'Clear',
-                type: hasDues ? StatusChipType.error : StatusChipType.success,
-              ),
+              if (!tenant.isActive)
+                StatusChip(
+                  label: hasDues ? 'Left (Dues)' : 'Vacated',
+                  type: hasDues ? StatusChipType.error : StatusChipType.neutral,
+                )
+              else
+                StatusChip(
+                  label: hasDues ? 'Dues' : 'Clear',
+                  type: hasDues ? StatusChipType.error : StatusChipType.success,
+                ),
             ],
           ),
           PopupMenuButton<String>(
@@ -683,6 +811,7 @@ class _TenantItem {
   final String mobile;
   final int rentDuePaise;
   final int elecDuePaise;
+  final bool isActive;
 
   const _TenantItem({
     required this.tenancyId,
@@ -692,6 +821,7 @@ class _TenantItem {
     required this.mobile,
     required this.rentDuePaise,
     required this.elecDuePaise,
+    this.isActive = true,
   });
 
   int get totalDuePaise => rentDuePaise + elecDuePaise;

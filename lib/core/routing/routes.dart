@@ -22,5 +22,6 @@ class Routes {
   static const tenantLedger = '/tenant/ledger';
   static const tenantNotifications = '/tenant/notifications';
   static const tenantDocuments = '/tenant/documents';
+  static const tenantDetails = '/tenant/details';
   static const tenantSettings = '/tenant/settings';
 }

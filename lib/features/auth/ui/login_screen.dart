@@ -1,10 +1,8 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../../../core/config/env.dart';
 import '../../../core/routing/routes.dart';
 import '../../../core/services/biometric_service.dart';
 import '../../../core/theme/app_colors.dart';
@@ -12,7 +10,6 @@ import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/validators.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/app_text_field.dart';
-import '../providers/auth_provider.dart';
 
 /// Figma frame 06 — Secure login & optional biometric
 class LoginScreen extends ConsumerStatefulWidget {
@@ -386,6 +383,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                             const SizedBox(height: 16),
                             const _BiometricHint(),
                           ],
+                          const SizedBox(height: 14),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: AppColors.canvas,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: AppColors.border),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.inkMuted),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Tenants: Enter your 10-digit registered mobile number to sign in directly.',
+                                    style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),

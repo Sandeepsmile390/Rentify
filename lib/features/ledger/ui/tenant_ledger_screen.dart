@@ -10,6 +10,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/currency_formatter.dart';
 import '../../../core/widgets/status_chip.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// Figma frames 02 & 03 — Tenant home + Tenant ledger (tenant-facing views)
 class TenantLedgerScreen extends ConsumerStatefulWidget {
@@ -368,7 +369,135 @@ class _TenantHeader extends StatelessWidget {
               ],
             ),
           ),
+          if (hasDues) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.white38),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    onPressed: () => context.go(Routes.tenantDetails),
+                    icon: const Icon(Icons.info_outline_rounded, size: 16),
+                    label: const Text('View Terms'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.action,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    onPressed: () => _showPaymentOptions(context, data.totalDuePaise),
+                    icon: const Icon(Icons.payment_rounded, size: 16),
+                    label: const Text('Pay Dues'),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
+      ),
+    );
+  }
+
+  void _showPaymentOptions(BuildContext context, int totalDuePaise) {
+    final amtFormatted = CurrencyFormatter.fromPaise(totalDuePaise);
+    final amtRupees = (totalDuePaise / 100).toStringAsFixed(2);
+    final upiUri = Uri.parse(
+        'upi://pay?pa=rentify@upi&pn=Rentify%20Rent&am=$amtRupees&cu=INR&tn=Rent%20and%20Electricity%20Payment');
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (bCtx) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Pay Outstanding Dues', style: AppTextStyles.h2),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: () => Navigator.pop(bCtx),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.actionBg,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.action.withValues(alpha: 0.3)),
+              ),
+              child: Column(
+                children: [
+                  Text('Total Amount Payable',
+                      style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted)),
+                  const SizedBox(height: 4),
+                  Text(amtFormatted, style: AppTextStyles.h1.copyWith(color: AppColors.action)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () async {
+                Navigator.pop(bCtx);
+                try {
+                  if (await canLaunchUrl(upiUri)) {
+                    await launchUrl(upiUri, mode: LaunchMode.externalApplication);
+                  } else {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('UPI payment app not found. Please pay via your bank app or contact landlord.'),
+                        ),
+                      );
+                    }
+                  }
+                } catch (_) {}
+              },
+              icon: const Icon(Icons.account_balance_wallet_rounded),
+              label: const Text('Pay via Any UPI App (GPay / PhonePe)'),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () async {
+                Navigator.pop(bCtx);
+                final waUri = Uri.parse(
+                    'https://wa.me/?text=${Uri.encodeComponent("Hello Landlord, I am submitting payment of $amtFormatted for room charges. Please verify.")}');
+                try {
+                  await launchUrl(waUri, mode: LaunchMode.externalApplication);
+                } catch (_) {}
+              },
+              icon: const Icon(Icons.chat_bubble_outline_rounded, color: AppColors.success),
+              label: const Text('Send Confirmation to Landlord'),
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
       ),
     );
   }

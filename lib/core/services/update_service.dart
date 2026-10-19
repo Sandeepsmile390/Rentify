@@ -1,5 +1,5 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -7,13 +7,44 @@ import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 
 class UpdateService {
-  static const String currentAppVersion = '1.1.0+2';
-  static bool _hasPromptedThisSession = false;
+  static const String currentAppVersion = '1.1.0+3';
+  static const String defaultApkUrl =
+      'https://drive.google.com/file/d/17iyA3iucFCk4YTtYbj_X_HpyYXS8C_zx/view?usp=sharing';
+
+  /// Broadcasts an app update across all tenants and landlords
+  static Future<bool> broadcastUpdate({
+    required String version,
+    required String apkUrl,
+    required String notes,
+  }) async {
+    try {
+      final client = Supabase.instance.client;
+      await client.from('system_settings').upsert([
+        {'key': 'app_version', 'value': version},
+        {'key': 'apk_download_url', 'value': apkUrl},
+        {'key': 'app_release_notes', 'value': notes},
+      ], onConflict: 'key');
+
+      // Create live broadcast notification in notifications table
+      await client.from('notifications').insert({
+        'title': 'New Update v$version Available',
+        'message': notes.isNotEmpty
+            ? notes
+            : 'A new update is available. Download and install now for the latest features and bug fixes.',
+        'type': 'app_update',
+        'is_read': false,
+        'metadata': {'apk_url': apkUrl, 'version': version},
+      });
+
+      return true;
+    } catch (e) {
+      debugPrint('Error broadcasting update: $e');
+      return false;
+    }
+  }
 
   /// Checks if a newer version exists in Supabase system_settings
   static Future<void> checkForUpdates(BuildContext context, {bool isManual = false}) async {
-    if (!kIsWeb && !isManual && _hasPromptedThisSession) return;
-
     try {
       final client = Supabase.instance.client;
       final res = await client
@@ -27,18 +58,26 @@ class UpdateService {
       }
 
       final latestVer = settings['app_version'] ?? currentAppVersion;
-      final apkUrl = settings['apk_download_url'] ??
-          'https://github.com/Sandeepsmile390/Rentify/raw/main/build/app/outputs/flutter-apk/app-release.apk';
+      final apkUrl = (settings['apk_download_url'] != null && settings['apk_download_url']!.isNotEmpty)
+          ? settings['apk_download_url']!
+          : defaultApkUrl;
       final notes = settings['app_release_notes'] ?? 'General performance improvements and bug fixes.';
 
       if (_isNewerVersion(latestVer, currentAppVersion)) {
-        _hasPromptedThisSession = true;
-        if (context.mounted) {
-          _showUpdateDialog(context, latestVer, apkUrl, notes);
+        // Broadcast app update: only show modal popup once per version
+        final prefs = await SharedPreferences.getInstance();
+        final promptedKey = 'has_shown_update_popup_$latestVer';
+        final hasShownPopup = prefs.getBool(promptedKey) ?? false;
+
+        if (isManual || !hasShownPopup) {
+          await prefs.setBool(promptedKey, true);
+          if (context.mounted) {
+            _showUpdateDialog(context, latestVer, apkUrl, notes);
+          }
         }
       } else if (isManual && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
+          const SnackBar(
             content: Text('You are on the latest version ($currentAppVersion).'),
             backgroundColor: AppColors.success,
           ),
@@ -87,7 +126,7 @@ class UpdateService {
   ) {
     showDialog(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (dCtx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
@@ -131,6 +170,11 @@ class UpdateService {
                 style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
               ),
             ),
+            const SizedBox(height: 8),
+            Text(
+              'You can also find this update anytime in your Alerts tab.',
+              style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+            ),
           ],
         ),
         actions: [
@@ -144,7 +188,7 @@ class UpdateService {
               await downloadAndInstallApk(context, apkUrl);
             },
             icon: const Icon(Icons.download_rounded, size: 18),
-            label: const Text('Update & Install'),
+            label: const Text('Download & Update'),
           ),
         ],
       ),
@@ -153,7 +197,7 @@ class UpdateService {
 
   /// Downloads and triggers APK installation
   static Future<void> downloadAndInstallApk(BuildContext context, String apkUrl) async {
-    final uri = Uri.parse(apkUrl);
+    final uri = Uri.parse(apkUrl.isNotEmpty ? apkUrl : defaultApkUrl);
     try {
       final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!launched) {
@@ -163,45 +207,11 @@ class UpdateService {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to open update link: $e'),
+            content: Text('Could not open APK download link: $e'),
             backgroundColor: AppColors.error,
           ),
         );
       }
-    }
-  }
-
-  /// Broadcasts a new update version to system_settings and sends notification to everyone
-  static Future<bool> broadcastUpdate({
-    required String version,
-    required String apkUrl,
-    required String notes,
-  }) async {
-    try {
-      final client = Supabase.instance.client;
-      // 1. Update system_settings
-      await client.from('system_settings').upsert([
-        {'key': 'app_version', 'value': version},
-        {'key': 'apk_download_url', 'value': apkUrl},
-        {'key': 'app_release_notes', 'value': notes},
-      ], onConflict: 'key');
-
-      // 2. Broadcast notification to all users
-      await client.from('notifications').insert({
-        'id': 'update-${DateTime.now().millisecondsSinceEpoch}',
-        'for_role': 'all',
-        'category': 'system',
-        'title': 'New Rentify Update v$version Available',
-        'body': notes,
-        'message': notes,
-        'is_read': false,
-        'read': false,
-      });
-
-      return true;
-    } catch (e) {
-      debugPrint('Failed to broadcast update: $e');
-      return false;
     }
   }
 }

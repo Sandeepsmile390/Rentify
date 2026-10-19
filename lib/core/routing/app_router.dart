@@ -19,6 +19,7 @@ import '../../features/audit/ui/audit_trail_screen.dart';
 import '../../features/reports/ui/reports_screen.dart';
 import '../../features/billing/ui/billing_screen.dart';
 import '../../features/documents/ui/documents_screen.dart';
+import '../../features/tenant_profile/ui/tenant_details_screen.dart';
 import '../widgets/responsive_scaffold.dart';
 import 'routes.dart';
 
@@ -216,6 +217,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             name: 'tenant-documents',
             pageBuilder: (context, state) =>
                 _noTransition(state, const DocumentsScreen()),
+          ),
+          GoRoute(
+            path: Routes.tenantDetails,
+            name: 'tenant-details',
+            pageBuilder: (context, state) =>
+                _noTransition(state, const TenantDetailsScreen()),
           ),
           GoRoute(
             path: Routes.tenantSettings,

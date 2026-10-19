@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -25,6 +23,7 @@ class DocumentsScreen extends StatefulWidget {
 
 class _DocumentsScreenState extends State<DocumentsScreen> {
   bool _isLoading = true;
+  bool _isTenant = false;
   String? _resolvedTenancyId;
   List<_DocItem> _documents = [];
 
@@ -37,9 +36,24 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   Future<void> _loadDocuments() async {
     try {
       final client = Supabase.instance.client;
+      final user = client.auth.currentUser;
+      bool isUserTenant = widget.tenancyId == null;
+
+      if (user != null) {
+        try {
+          final profile = await client
+              .from('profiles')
+              .select('role')
+              .eq('id', user.id)
+              .maybeSingle();
+          if (profile != null && profile['role'] == 'tenant') {
+            isUserTenant = true;
+          }
+        } catch (_) {}
+      }
+
       String? tId = widget.tenancyId ?? _resolvedTenancyId;
       if (tId == null) {
-        final user = client.auth.currentUser;
         if (user != null) {
           final tenRes = await client
               .from('tenancies')
@@ -79,6 +93,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
+        _isTenant = isUserTenant;
         _documents = list;
       });
     } catch (e) {
@@ -466,19 +481,26 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                       children: [
                         const Icon(Icons.folder_open_rounded, size: 56, color: AppColors.inkMuted),
                         const SizedBox(height: 16),
-                        Text('No documents uploaded yet', style: AppTextStyles.h3),
+                        Text(
+                          _isTenant ? 'No documents shared yet' : 'No documents uploaded yet',
+                          style: AppTextStyles.h3,
+                        ),
                         const SizedBox(height: 8),
                         Text(
-                          'Keep track of tenant agreements, Aadhaar, PAN cards, and identity proofs.',
+                          _isTenant
+                              ? 'Official rental agreements and identity records shared by your landlord will appear here.'
+                              : 'Keep track of tenant agreements, Aadhaar, PAN cards, and identity proofs.',
                           style: AppTextStyles.bodyRegular,
                           textAlign: TextAlign.center,
                         ),
-                        const SizedBox(height: 24),
-                        FilledButton.icon(
-                          onPressed: _showAddDocumentSheet,
-                          icon: const Icon(Icons.add_rounded),
-                          label: const Text('Add Document'),
-                        ),
+                        if (!_isTenant) ...[
+                          const SizedBox(height: 24),
+                          FilledButton.icon(
+                            onPressed: _showAddDocumentSheet,
+                            icon: const Icon(Icons.add_rounded),
+                            label: const Text('Add Document'),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -494,12 +516,12 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                       return _DocTile(
                         doc: doc,
                         onTap: () => _viewDocument(doc),
-                        onDelete: () => _deleteDocument(doc.id, doc.displayTitle),
+                        onDelete: _isTenant ? null : () => _deleteDocument(doc.id, doc.displayTitle),
                       );
                     },
                   ),
                 ),
-      floatingActionButton: _documents.isNotEmpty
+      floatingActionButton: (!_isTenant && _documents.isNotEmpty)
           ? FloatingActionButton.extended(
               onPressed: _showAddDocumentSheet,
               icon: const Icon(Icons.add_rounded),
@@ -581,11 +603,11 @@ class _DocTile extends StatelessWidget {
   const _DocTile({
     required this.doc,
     required this.onTap,
-    required this.onDelete,
+    this.onDelete,
   });
   final _DocItem doc;
   final VoidCallback onTap;
-  final VoidCallback onDelete;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -646,11 +668,12 @@ class _DocTile extends StatelessWidget {
               tooltip: 'View Document',
               onPressed: onTap,
             ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline_rounded, color: AppColors.error),
-              tooltip: 'Delete document',
-              onPressed: onDelete,
-            ),
+            if (onDelete != null)
+              IconButton(
+                icon: const Icon(Icons.delete_outline_rounded, color: AppColors.error),
+                tooltip: 'Delete document',
+                onPressed: onDelete,
+              ),
           ],
         ),
       ),
