@@ -31,6 +31,7 @@ class _TenantDetailsScreenState extends ConsumerState<TenantDetailsScreen> {
   int _electricityRatePaise = 900;
   String _electricityMode = 'metered';
   double _initialMeterReading = 0.0;
+  int _fixedElecAmountPaise = 0;
   bool _isBiometricSupported = false;
   bool _isBiometricEnabled = false;
 
@@ -86,6 +87,7 @@ class _TenantDetailsScreenState extends ConsumerState<TenantDetailsScreen> {
       int elecRate = 900;
       String elecMode = 'metered';
       double initReading = 0.0;
+      int fixedAmt = 0;
       Map<String, dynamic>? admin;
 
       if (tenancy != null) {
@@ -118,6 +120,21 @@ class _TenantDetailsScreenState extends ConsumerState<TenantDetailsScreen> {
           }
         } catch (_) {}
 
+        try {
+          final elecRes = await client
+              .from('electricity_config')
+              .select('mode, initial_reading, fixed_amount_paise')
+              .eq('tenancy_id', tId)
+              .maybeSingle();
+          if (elecRes != null) {
+            elecMode = (elecRes['mode'] as String?) ?? elecMode;
+            if (elecRes['initial_reading'] != null) {
+              initReading = (elecRes['initial_reading'] as num?)?.toDouble() ?? initReading;
+            }
+            fixedAmt = (elecRes['fixed_amount_paise'] as num?)?.toInt() ?? 0;
+          }
+        } catch (_) {}
+
         // 3. Fetch landlord/admin profile
         try {
           final adminRes = await client
@@ -140,6 +157,7 @@ class _TenantDetailsScreenState extends ConsumerState<TenantDetailsScreen> {
         _electricityRatePaise = elecRate;
         _electricityMode = elecMode;
         _initialMeterReading = initReading;
+        _fixedElecAmountPaise = fixedAmt;
         _adminProfile = admin;
         _isBiometricSupported = supported;
         _isBiometricEnabled = enabled;
@@ -307,9 +325,25 @@ class _TenantDetailsScreenState extends ConsumerState<TenantDetailsScreen> {
                 ),
                 _DetailRow(
                   label: 'Electricity Billing Mode',
-                  value: _electricityMode.toLowerCase() == 'fixed' ? 'Fixed Monthly Charge' : 'Metered Consumption',
+                  value: _electricityMode.toLowerCase() == 'fixed'
+                      ? 'Fixed Monthly Charge'
+                      : (_electricityMode.toLowerCase() == 'none'
+                          ? 'Not Available / No Meter Needed'
+                          : 'Metered Consumption'),
                 ),
-                if (_electricityMode.toLowerCase() == 'metered') ...[
+                if (_electricityMode.toLowerCase() == 'fixed') ...[
+                  _DetailRow(
+                    label: 'Fixed Electricity Amount',
+                    value: '₹${(_fixedElecAmountPaise / 100).toStringAsFixed(0)} / month (Auto-billed, no readings needed)',
+                  ),
+                ],
+                if (_electricityMode.toLowerCase() == 'none') ...[
+                  const _DetailRow(
+                    label: 'Electricity Status',
+                    value: 'No meter needed (Included in rent)',
+                  ),
+                ],
+                if (_electricityMode.toLowerCase() == 'meter' || _electricityMode.toLowerCase() == 'metered') ...[
                   _DetailRow(
                     label: 'Electricity Unit Rate',
                     value: '₹${(_electricityRatePaise / 100).toStringAsFixed(2)} / kWh unit',

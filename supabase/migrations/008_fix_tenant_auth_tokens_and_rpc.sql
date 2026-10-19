@@ -75,7 +75,7 @@ BEGIN
       email,
       encrypted_password,
       email_confirmed_at,
-      confirmed_at,
+      phone_confirmed_at,
       confirmation_token,
       recovery_token,
       email_change_token_new,

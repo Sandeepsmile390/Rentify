@@ -142,6 +142,22 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
         fixedElecAmountPaise = (elecRes['fixed_amount_paise'] as num?)?.toInt() ?? 0;
       }
 
+      // If fixed electricity mode, automatically ensure current month's fixed bill is generated on billing date
+      if (elecMode == 'fixed' && fixedElecAmountPaise > 0 && isActive) {
+        final canonicalMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}-01';
+        try {
+          await client.from('charges').upsert({
+            'tenancy_id': widget.tenancyId,
+            'charge_type': 'electricity',
+            'billing_month': canonicalMonth,
+            'amount_paise': fixedElecAmountPaise,
+            'status': 'pending',
+          }, onConflict: 'tenancy_id,charge_type,billing_month');
+        } catch (e) {
+          debugPrint('Auto fixed electricity charge notice: $e');
+        }
+      }
+
       // 4. Meter readings history (sorted by billing_month & creation time)
       final List<_MeterReadingItem> meterReadingItems = [];
       double lastMeter = initialMeterReading ?? 0.0;
@@ -269,9 +285,9 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
         }
       } else if (elecMode == 'fixed') {
         final amt = currentElecPaise > 0 ? currentElecPaise : fixedElecAmountPaise;
-        elecStatus = '${CurrencyFormatter.fromPaise(amt)}/month';
+        elecStatus = '${CurrencyFormatter.fromPaise(amt)}/month (Fixed)';
       } else {
-        elecStatus = 'Included in rent';
+        elecStatus = 'Not Available / No Need';
       }
 
       // 6. Payments
@@ -345,6 +361,7 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
           advanceBalancePaise: advanceBalancePaise,
           currentRentPaise: currentRentPaise,
           currentElecPaise: currentElecPaise,
+          fixedElecAmountPaise: fixedElecAmountPaise,
           elecStatus: elecStatus,
           paymentsThisMonthPaise: paymentsThisMonthPaise,
           lastMeterReading: lastMeter,
@@ -926,7 +943,7 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
                   isWide: isWide,
                   tenancyId: widget.tenancyId,
                 ),
-                _TabBar(controller: _tabCtrl),
+                _TabBar(controller: _tabCtrl, elecMode: _data!.elecMode),
               ],
               body: TabBarView(
                 controller: _tabCtrl,
@@ -1072,19 +1089,20 @@ class _ProfileAppBar extends StatelessWidget {
           tooltip: 'Edit tenant details',
           onPressed: onEdit,
         ),
-        IconButton(
-          icon: const Icon(Icons.electric_meter_outlined, color: Colors.white),
-          tooltip: 'Enter meter reading',
-          onPressed: () async {
-            final updated = await context.pushNamed(
-              'meter-reading',
-              pathParameters: {'tenancyId': tenancyId},
-            );
-            if (updated == true) {
-              await onRefresh();
-            }
-          },
-        ),
+        if (data.elecMode == 'meter')
+          IconButton(
+            icon: const Icon(Icons.electric_meter_outlined, color: Colors.white),
+            tooltip: 'Enter meter reading',
+            onPressed: () async {
+              final updated = await context.pushNamed(
+                'meter-reading',
+                pathParameters: {'tenancyId': tenancyId},
+              );
+              if (updated == true) {
+                await onRefresh();
+              }
+            },
+          ),
         IconButton(
           icon: const Icon(Icons.delete_outline_rounded, color: Colors.white70),
           tooltip: 'Delete tenant',
@@ -1113,6 +1131,19 @@ class _ProfileAppBar extends StatelessWidget {
               onTap: () {
                 Navigator.pop(sheetCtx);
                 onEdit();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.bolt_rounded, color: AppColors.action),
+              title: const Text('Electricity Setup'),
+              subtitle: Text(data.elecMode == 'meter'
+                  ? 'Meter-based (Unit readings)'
+                  : (data.elecMode == 'fixed'
+                      ? 'Fixed (₹${(data.fixedElecAmountPaise / 100).toStringAsFixed(0)}/mo auto-billed)'
+                      : 'No meter (Not available / No need)')),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                _showElectricityModeDialog(context, tenancyId, data, onRefresh);
               },
             ),
             ListTile(
@@ -1338,8 +1369,9 @@ class _Divider extends StatelessWidget {
 // ── Tab bar ───────────────────────────────────────────────────────
 
 class _TabBar extends StatelessWidget {
-  const _TabBar({required this.controller});
+  const _TabBar({required this.controller, this.elecMode = 'meter'});
   final TabController controller;
+  final String elecMode;
 
   @override
   Widget build(BuildContext context) {
@@ -1354,12 +1386,12 @@ class _TabBar extends StatelessWidget {
           unselectedLabelColor: AppColors.inkMuted,
           indicatorColor: AppColors.action,
           indicatorWeight: 2,
-          tabs: const [
-            Tab(text: 'Overview'),
-            Tab(text: 'Charges'),
-            Tab(text: 'Payments'),
-            Tab(text: 'Meter'),
-            Tab(text: 'Details'),
+          tabs: [
+            const Tab(text: 'Overview'),
+            const Tab(text: 'Charges'),
+            const Tab(text: 'Payments'),
+            Tab(text: elecMode == 'meter' ? 'Meter' : 'Electricity'),
+            const Tab(text: 'Details'),
           ],
         ),
       ),
@@ -1405,20 +1437,44 @@ class _OverviewTab extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: AppButton(
-                label: 'Meter reading',
-                type: AppButtonType.outlined,
-                icon: Icons.electric_meter_outlined,
-                onPressed: () async {
-                  final updated = await context.pushNamed(
-                    'meter-reading',
-                    pathParameters: {'tenancyId': tenancyId},
-                  );
-                  if (updated == true) {
-                    await onRefresh();
-                  }
-                },
-              ),
+              child: data.elecMode == 'meter'
+                  ? AppButton(
+                      label: 'Meter reading',
+                      type: AppButtonType.outlined,
+                      icon: Icons.electric_meter_outlined,
+                      onPressed: () async {
+                        final updated = await context.pushNamed(
+                          'meter-reading',
+                          pathParameters: {'tenancyId': tenancyId},
+                        );
+                        if (updated == true) {
+                          await onRefresh();
+                        }
+                      },
+                    )
+                  : (data.elecMode == 'fixed'
+                      ? AppButton(
+                          label: 'Fixed: ₹${(data.fixedElecAmountPaise / 100).toStringAsFixed(0)}',
+                          type: AppButtonType.outlined,
+                          icon: Icons.bolt_rounded,
+                          onPressed: () => _showElectricityModeDialog(
+                            context,
+                            tenancyId,
+                            data,
+                            onRefresh,
+                          ),
+                        )
+                      : AppButton(
+                          label: 'No meter',
+                          type: AppButtonType.outlined,
+                          icon: Icons.tune_rounded,
+                          onPressed: () => _showElectricityModeDialog(
+                            context,
+                            tenancyId,
+                            data,
+                            onRefresh,
+                          ),
+                        )),
             ),
           ],
         ),
@@ -1722,116 +1778,240 @@ class _MeterTab extends StatelessWidget {
     return canonicalMonth;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final hasReadings = data.meterReadings.isNotEmpty;
-    final totalUnitsConsumed = data.meterReadings.fold<double>(
-      0.0,
-      (sum, item) => sum + item.unitsConsumed,
-    );
-
-    return ListView(
+  Widget _buildFixedCard(BuildContext context) {
+    return Container(
       padding: const EdgeInsets.all(16),
-      children: [
-        // 1. Meter configuration & baseline initialization card
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: AppColors.warningBg,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.electric_meter_rounded, color: AppColors.warning, size: 22),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Electricity Meter Setup', style: AppTextStyles.h3),
-                        Text(
-                          data.elecMode == 'meter'
-                              ? 'Metered Billing (per-unit)'
-                              : data.elecMode == 'fixed'
-                                  ? 'Fixed monthly electricity'
-                                  : 'Electricity included in rent',
-                          style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
-                        ),
-                      ],
-                    ),
-                  ),
-                  StatusChip(
-                    label: data.elecMode == 'meter' ? 'Meter-based' : 'Fixed',
-                    type: StatusChipType.neutral,
-                  ),
-                ],
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: AppColors.warningBg,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.bolt_rounded, color: AppColors.warning, size: 24),
               ),
-              const SizedBox(height: 16),
-              const Divider(height: 1),
-              const SizedBox(height: 12),
-
-              // Baseline / Initial reading details
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Initial Reading (Baseline)', style: AppTextStyles.captionBold.copyWith(color: AppColors.inkMuted)),
-                        const SizedBox(height: 4),
-                        Text(
-                          data.initialMeterReading != null
-                              ? '${data.initialMeterReading!.toStringAsFixed(1)} units'
-                              : '0.0 units',
-                          style: AppTextStyles.bodyMedium,
-                        ),
-                        if (data.initialReadingDate != null && data.initialReadingDate!.isNotEmpty) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            'Initialized: ${_formatDate(data.initialReadingDate!)}',
-                            style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted, fontSize: 11),
-                          ),
-                        ],
-                      ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Fixed Electricity Mode', style: AppTextStyles.h3),
+                    Text(
+                      '₹${(data.fixedElecAmountPaise / 100).toStringAsFixed(0)} / month',
+                      style: AppTextStyles.bodyMedium.copyWith(color: AppColors.action, fontWeight: FontWeight.bold),
                     ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Latest Reading', style: AppTextStyles.captionBold.copyWith(color: AppColors.inkMuted)),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${data.lastMeterReading.toStringAsFixed(1)} units',
-                          style: AppTextStyles.bodyMedium,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'Total consumed: ${totalUnitsConsumed.toStringAsFixed(1)} units',
-                          style: AppTextStyles.caption.copyWith(color: AppColors.action, fontSize: 11),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-              const SizedBox(height: 16),
+              const StatusChip(
+                label: 'Fixed Mode',
+                type: StatusChipType.warning,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceVariant.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.check_circle_outline_rounded, color: AppColors.success, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Auto-Billed on Billing Date', style: AppTextStyles.captionBold),
+                      const SizedBox(height: 2),
+                      Text(
+                        'No meter reading is required or asked. A recurring charge of ₹${(data.fixedElecAmountPaise / 100).toStringAsFixed(0)} is automatically generated every month on the tenancy billing date.',
+                        style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => _showElectricityModeDialog(context, tenancyId, data, onRefresh),
+              icon: const Icon(Icons.tune_rounded, size: 18),
+              label: const Text('Change Mode or Fixed Amount'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-              // Action button to record new reading
-              SizedBox(
-                width: double.infinity,
+  Widget _buildNoneCard(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: const BoxDecoration(
+              color: AppColors.surfaceVariant,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.power_off_rounded, color: AppColors.inkMuted, size: 28),
+          ),
+          const SizedBox(height: 12),
+          Text('No Meter / Not Available', style: AppTextStyles.h3),
+          const SizedBox(height: 4),
+          Text(
+            'Electricity is either included in rent or not separately metered for this tenant.\nNo meter readings are required or asked.',
+            style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _showElectricityModeDialog(context, tenancyId, data, onRefresh),
+                  icon: const Icon(Icons.electric_meter_outlined, size: 18),
+                  label: const Text('Switch to Reading'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => _showElectricityModeDialog(context, tenancyId, data, onRefresh),
+                  icon: const Icon(Icons.bolt_rounded, size: 18),
+                  label: const Text('Switch to Fixed'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMeteredCard(BuildContext context, double totalUnitsConsumed) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.warningBg,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.electric_meter_rounded, color: AppColors.warning, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Electricity Meter Setup', style: AppTextStyles.h3),
+                    Text(
+                      'Metered Billing (per-unit)',
+                      style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                    ),
+                  ],
+                ),
+              ),
+              const StatusChip(
+                label: 'Meter-based',
+                type: StatusChipType.neutral,
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
+
+          // Baseline / Initial reading details
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Initial Reading (Baseline)', style: AppTextStyles.captionBold.copyWith(color: AppColors.inkMuted)),
+                    const SizedBox(height: 4),
+                    Text(
+                      data.initialMeterReading != null
+                          ? '${data.initialMeterReading!.toStringAsFixed(1)} units'
+                          : '0.0 units',
+                      style: AppTextStyles.bodyMedium,
+                    ),
+                    if (data.initialReadingDate != null && data.initialReadingDate!.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'Initialized: ${_formatDate(data.initialReadingDate!)}',
+                        style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted, fontSize: 11),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Latest Reading', style: AppTextStyles.captionBold.copyWith(color: AppColors.inkMuted)),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${data.lastMeterReading.toStringAsFixed(1)} units',
+                      style: AppTextStyles.bodyMedium,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Total consumed: ${totalUnitsConsumed.toStringAsFixed(1)} units',
+                      style: AppTextStyles.caption.copyWith(color: AppColors.action, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Action buttons: record new reading + switch mode
+          Row(
+            children: [
+              Expanded(
                 child: FilledButton.icon(
                   onPressed: () async {
                     await context.pushNamed(
@@ -1841,158 +2021,284 @@ class _MeterTab extends StatelessWidget {
                     await onRefresh();
                   },
                   icon: const Icon(Icons.add_rounded, size: 18),
-                  label: const Text('Record Meter Reading'),
+                  label: const Text('Record Reading'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: () => _showElectricityModeDialog(context, tenancyId, data, onRefresh),
+                icon: const Icon(Icons.tune_rounded, size: 16),
+                label: const Text('Switch Mode'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasReadings = data.meterReadings.isNotEmpty;
+    final totalUnitsConsumed = data.meterReadings.fold<double>(
+      0.0,
+      (sum, item) => sum + item.unitsConsumed,
+    );
+    final elecCharges = data.charges.where((c) => c.type == 'electricity').toList();
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (data.elecMode == 'fixed') ...[
+          _buildFixedCard(context),
+          const SizedBox(height: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Electricity Charges History', style: AppTextStyles.h3),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceVariant,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${elecCharges.length} bills',
+                  style: AppTextStyles.captionBold.copyWith(color: AppColors.inkMuted),
                 ),
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 20),
-
-        // 2. Meter Readings History
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('Meter Readings History', style: AppTextStyles.h3),
+          const SizedBox(height: 12),
+          if (elecCharges.isEmpty)
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                color: AppColors.surfaceVariant,
+                color: AppColors.surface,
                 borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border),
               ),
-              child: Text(
-                '${data.meterReadings.length} records',
-                style: AppTextStyles.captionBold.copyWith(color: AppColors.inkMuted),
+              child: Column(
+                children: [
+                  const Icon(Icons.bolt_rounded, size: 40, color: AppColors.inkMuted),
+                  const SizedBox(height: 12),
+                  Text('No electricity charges generated yet', style: AppTextStyles.bodyMedium),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Fixed electricity bills are auto-generated on the billing date every month.',
+                    style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-
-        if (!hasReadings)
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: Column(
-              children: [
-                const Icon(Icons.speed_rounded, size: 40, color: AppColors.inkMuted),
-                const SizedBox(height: 12),
-                Text('No meter readings recorded yet', style: AppTextStyles.bodyMedium),
-                const SizedBox(height: 4),
-                Text(
-                  'Record monthly electricity readings to calculate consumption and dues automatically.',
-                  style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          )
-        else
-          ListView.separated(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: data.meterReadings.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (_, i) {
-              final item = data.meterReadings[i];
-              return Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.calendar_month_outlined, size: 16, color: AppColors.action),
-                            const SizedBox(width: 6),
-                            Text(
-                              _formatMonth(item.billingMonth),
-                              style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.bold),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: elecCharges.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (ctx, i) {
+                final c = elecCharges[i];
+                return Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: AppColors.warningBg,
+                              borderRadius: BorderRadius.circular(8),
                             ),
-                          ],
-                        ),
+                            child: const Icon(Icons.bolt_rounded, size: 18, color: AppColors.warning),
+                          ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(c.label, style: AppTextStyles.bodyMedium),
+                              Text(_formatMonth(c.month), style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted)),
+                            ],
+                          ),
+                        ],
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            CurrencyFormatter.fromPaise(c.amountPaise),
+                            style: AppTextStyles.currencySmall.copyWith(color: AppColors.action),
+                          ),
+                          StatusChip(
+                            label: c.status.toUpperCase(),
+                            type: c.status == 'paid' ? StatusChipType.success : StatusChipType.warning,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+        ] else if (data.elecMode == 'none') ...[
+          _buildNoneCard(context),
+        ] else ...[
+          _buildMeteredCard(context, totalUnitsConsumed),
+          const SizedBox(height: 20),
+
+          // Meter Readings History
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Meter Readings History', style: AppTextStyles.h3),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceVariant,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${data.meterReadings.length} records',
+                  style: AppTextStyles.captionBold.copyWith(color: AppColors.inkMuted),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          if (!hasReadings)
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                children: [
+                  const Icon(Icons.speed_rounded, size: 40, color: AppColors.inkMuted),
+                  const SizedBox(height: 12),
+                  Text('No meter readings recorded yet', style: AppTextStyles.bodyMedium),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Record monthly electricity readings to calculate consumption and dues automatically.',
+                    style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: data.meterReadings.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (_, i) {
+                final item = data.meterReadings[i];
+                return Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.calendar_month_outlined, size: 16, color: AppColors.action),
+                              const SizedBox(width: 6),
+                              Text(
+                                _formatMonth(item.billingMonth),
+                                style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.warningBg,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              '+${item.unitsConsumed.toStringAsFixed(1)} units',
+                              style: AppTextStyles.captionBold.copyWith(color: AppColors.warning),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Added: ${_formatDate(item.createdAt)}',
+                        style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                      ),
+                      const SizedBox(height: 8),
+                      const Divider(height: 1),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Previous → Current', style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted)),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${item.previousReading.toStringAsFixed(1)} → ${item.currentReading.toStringAsFixed(1)}',
+                                style: AppTextStyles.bodyRegular,
+                              ),
+                            ],
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                CurrencyFormatter.fromPaise(item.amountPaise),
+                                style: AppTextStyles.currencySmall.copyWith(color: AppColors.action),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '@ ₹${(item.ratePaise / 100.0).toStringAsFixed(2)} / unit',
+                                style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      if (item.notes != null && item.notes!.trim().isNotEmpty) ...[
+                        const SizedBox(height: 8),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
-                            color: AppColors.warningBg,
+                            color: AppColors.canvas,
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
-                            '+${item.unitsConsumed.toStringAsFixed(1)} units',
-                            style: AppTextStyles.captionBold.copyWith(color: AppColors.warning),
+                            item.notes!,
+                            style: AppTextStyles.caption.copyWith(fontStyle: FontStyle.italic),
                           ),
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Added: ${_formatDate(item.createdAt)}',
-                      style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
-                    ),
-                    const SizedBox(height: 8),
-                    const Divider(height: 1),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Previous → Current', style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted)),
-                            const SizedBox(height: 2),
-                            Text(
-                              '${item.previousReading.toStringAsFixed(1)} → ${item.currentReading.toStringAsFixed(1)}',
-                              style: AppTextStyles.bodyRegular,
-                            ),
-                          ],
-                        ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              CurrencyFormatter.fromPaise(item.amountPaise),
-                              style: AppTextStyles.currencySmall.copyWith(color: AppColors.action),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '@ ₹${(item.ratePaise / 100.0).toStringAsFixed(2)} / unit',
-                              style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    if (item.notes != null && item.notes!.trim().isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: AppColors.canvas,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          item.notes!,
-                          style: AppTextStyles.caption.copyWith(fontStyle: FontStyle.italic),
-                        ),
-                      ),
                     ],
-                  ],
-                ),
-              );
-            },
-          ),
+                  ),
+                );
+              },
+            ),
+        ],
         const SizedBox(height: 80),
       ],
     );
@@ -2260,6 +2566,7 @@ class _ProfileData {
   final String? email, notes;
   final bool isActive, loginEnabled;
   final int rentDuePaise, elecDuePaise, advanceBalancePaise, currentRentPaise, currentElecPaise, paymentsThisMonthPaise;
+  final int fixedElecAmountPaise;
   final double lastMeterReading;
   final double? initialMeterReading;
   final String? initialReadingDate;
@@ -2274,6 +2581,7 @@ class _ProfileData {
     this.email, this.notes, required this.isActive, required this.loginEnabled,
     required this.rentDuePaise, required this.elecDuePaise, required this.advanceBalancePaise,
     required this.currentRentPaise, required this.currentElecPaise, required this.paymentsThisMonthPaise,
+    this.fixedElecAmountPaise = 0,
     required this.lastMeterReading,
     this.initialMeterReading,
     this.initialReadingDate,
@@ -2301,6 +2609,7 @@ class _ProfileData {
     int? currentRentPaise,
     int? currentElecPaise,
     int? paymentsThisMonthPaise,
+    int? fixedElecAmountPaise,
     double? lastMeterReading,
     double? initialMeterReading,
     String? initialReadingDate,
@@ -2328,6 +2637,7 @@ class _ProfileData {
       currentRentPaise: currentRentPaise ?? this.currentRentPaise,
       currentElecPaise: currentElecPaise ?? this.currentElecPaise,
       paymentsThisMonthPaise: paymentsThisMonthPaise ?? this.paymentsThisMonthPaise,
+      fixedElecAmountPaise: fixedElecAmountPaise ?? this.fixedElecAmountPaise,
       lastMeterReading: lastMeterReading ?? this.lastMeterReading,
       initialMeterReading: initialMeterReading ?? this.initialMeterReading,
       initialReadingDate: initialReadingDate ?? this.initialReadingDate,
@@ -2562,6 +2872,214 @@ Future<void> _sendWhatsAppDuesSummary(
         SnackBar(
           content: Text('Failed to prepare WhatsApp dues notice: $e'),
           backgroundColor: AppColors.error,
+        ),
+      );
+    }
+  }
+}
+
+Future<void> _showElectricityModeDialog(
+  BuildContext context,
+  String tenancyId,
+  _ProfileData data,
+  Future<void> Function() onRefresh,
+) async {
+  String selectedMode = data.elecMode;
+  final fixedCtrl = TextEditingController(
+    text: data.fixedElecAmountPaise > 0
+        ? (data.fixedElecAmountPaise / 100).toStringAsFixed(0)
+        : '',
+  );
+  final readingCtrl = TextEditingController(
+    text: (data.initialMeterReading != null && data.initialMeterReading! > 0)
+        ? data.initialMeterReading!.toStringAsFixed(1)
+        : '',
+  );
+
+  final updated = await showDialog<bool>(
+    context: context,
+    builder: (dCtx) {
+      return StatefulBuilder(
+        builder: (sbCtx, setSbState) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.action.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.bolt_rounded, color: AppColors.action),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Electricity Setup', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      Text('Configure meter or fixed monthly billing', style: TextStyle(fontSize: 12, color: AppColors.inkMuted)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Select Electricity Mode:', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                  const SizedBox(height: 10),
+                  RadioListTile<String>(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('Meter-based (Unit readings)'),
+                    subtitle: const Text('Record meter readings periodically to calculate bill.'),
+                    value: 'meter',
+                    groupValue: selectedMode,
+                    onChanged: (val) {
+                      if (val != null) setSbState(() => selectedMode = val);
+                    },
+                  ),
+                  RadioListTile<String>(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('Fixed Monthly Charge'),
+                    subtitle: const Text('Auto-generates fixed electricity bill on billing date without asking meter readings.'),
+                    value: 'fixed',
+                    groupValue: selectedMode,
+                    onChanged: (val) {
+                      if (val != null) setSbState(() => selectedMode = val);
+                    },
+                  ),
+                  RadioListTile<String>(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('Not Available / No Need'),
+                    subtitle: const Text('Included in rent or no meter needed. No readings asked.'),
+                    value: 'none',
+                    groupValue: selectedMode,
+                    onChanged: (val) {
+                      if (val != null) setSbState(() => selectedMode = val);
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  if (selectedMode == 'fixed') ...[
+                    TextFormField(
+                      controller: fixedCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Fixed Monthly Electricity Charge (₹)',
+                        prefixText: '₹ ',
+                        hintText: 'e.g. 500',
+                        border: OutlineInputBorder(),
+                        helperText: 'Will automatically bill this amount every month.',
+                      ),
+                    ),
+                  ] else if (selectedMode == 'meter') ...[
+                    TextFormField(
+                      controller: readingCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Initial Meter Reading (Baseline)',
+                        suffixText: 'units',
+                        hintText: 'e.g. 100.0',
+                        border: OutlineInputBorder(),
+                        helperText: 'Starting baseline reading for new meter.',
+                      ),
+                    ),
+                  ] else ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceVariant,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.info_outline, size: 20, color: AppColors.inkMuted),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'No electricity readings will be asked or required for this tenant.',
+                              style: TextStyle(fontSize: 12, color: AppColors.inkMuted),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dCtx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  final client = Supabase.instance.client;
+                  final fixedVal = double.tryParse(fixedCtrl.text.trim()) ?? 0;
+                  final fixedPaise = (selectedMode == 'fixed' && fixedVal > 0)
+                      ? (fixedVal * 100).round()
+                      : 0;
+                  final readingVal = double.tryParse(readingCtrl.text.trim());
+
+                  try {
+                    await client.from('electricity_config').upsert({
+                      'tenancy_id': tenancyId,
+                      'mode': selectedMode,
+                      'fixed_amount_paise': fixedPaise,
+                      if (selectedMode == 'meter' && readingVal != null)
+                        'initial_reading': readingVal,
+                      'updated_at': DateTime.now().toIso8601String(),
+                    }, onConflict: 'tenancy_id');
+
+                    // If switched to fixed, and billing date is met, generate fixed charge
+                    if (selectedMode == 'fixed' && fixedPaise > 0) {
+                      final now = DateTime.now();
+                      final canonicalMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}-01';
+                      try {
+                        await client.from('charges').upsert({
+                          'tenancy_id': tenancyId,
+                          'charge_type': 'electricity',
+                          'billing_month': canonicalMonth,
+                          'amount_paise': fixedPaise,
+                          'status': 'pending',
+                        }, onConflict: 'tenancy_id,charge_type,billing_month');
+                      } catch (_) {}
+                    }
+
+                    if (context.mounted) {
+                      Navigator.pop(dCtx, true);
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Failed to update electricity mode: $e')),
+                      );
+                    }
+                  }
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+
+  if (updated == true) {
+    await onRefresh();
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Electricity configuration updated successfully.'),
+          backgroundColor: AppColors.success,
         ),
       );
     }
