@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,12 +5,14 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/routing/routes.dart';
+import '../../../core/services/whatsapp_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/currency_formatter.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/status_chip.dart';
 import '../../tenants/services/tenancy_service.dart';
+import 'package:intl/intl.dart';
 
 /// Figma frame 09 — Tenant profile financial overview (admin view)
 class TenantProfileScreen extends ConsumerStatefulWidget {
@@ -45,11 +46,13 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
   Future<void> _load() async {
     try {
       final client = Supabase.instance.client;
+      final now = DateTime.now();
+      final canonicalMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}-01';
 
       // 1. Tenancy
       final tenancy = await client
           .from('tenancies')
-          .select('id, profile_id, unit_id, tenant_type, tenant_name, mobile, start_date, is_active, notes')
+          .select('id, profile_id, unit_id, tenant_type, tenant_name, mobile, start_date, is_active, notes, login_enabled')
           .eq('id', widget.tenancyId)
           .maybeSingle();
 
@@ -68,6 +71,7 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
       final type = (tenancy['tenant_type'] as String?) == 'shop' ? 'Shop' : 'Room';
       final startDate = (tenancy['start_date'] as String?) ?? '';
       final isActive = (tenancy['is_active'] as bool?) ?? true;
+      final loginEnabled = (tenancy['login_enabled'] as bool?) ?? true;
 
       // 2. Rent rate
       int currentRentPaise = 0;
@@ -101,37 +105,55 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
           .from('meter_readings')
           .select('current_reading')
           .eq('tenancy_id', widget.tenancyId)
-          .order('created_at', ascending: false)
+          .order('reading_date', ascending: false)
           .limit(1)
           .maybeSingle();
       if (meterRes != null) {
         lastMeter = (meterRes['current_reading'] as num?)?.toDouble() ?? 0.0;
       }
 
-      // 5. Charges
-      final chargesRes = await client
-          .from('charges')
-          .select('id, charge_type, billing_month, amount_paise, status')
+      // 5. Query charge allocation totals view
+      final allocRes = await client
+          .from('charge_allocation_totals')
+          .select('charge_id, charge_type, billing_month, amount_paise, allocated_paise, outstanding_paise')
           .eq('tenancy_id', widget.tenancyId)
           .order('billing_month', ascending: false);
 
       int rentDuePaise = 0;
       int elecDuePaise = 0;
       int currentElecPaise = 0;
+      Map<String, dynamic>? currentCanonicalElecCharge;
+
       final List<_ChargeItem> chargeItems = [];
 
-      for (final c in (chargesRes as List<dynamic>)) {
-        final cType = (c['charge_type'] as String?) ?? 'rent';
-        final amt = (c['amount_paise'] as num?)?.toInt() ?? 0;
-        final status = (c['status'] as String?) ?? 'pending';
-        final month = (c['billing_month'] as String?) ?? '';
+      for (final r in (allocRes as List<dynamic>)) {
+        final cType = (r['charge_type'] as String?) ?? 'rent';
+        final amt = (r['amount_paise'] as num?)?.toInt() ?? 0;
+        final out = (r['outstanding_paise'] as num?)?.toInt() ?? 0;
+        final alloc = (r['allocated_paise'] as num?)?.toInt() ?? 0;
+        final month = (r['billing_month'] as String?) ?? '';
 
-        if (status != 'paid' && status != 'waived') {
-          if (cType == 'rent') rentDuePaise += amt;
-          if (cType == 'electricity') elecDuePaise += amt;
+        if (out > 0) {
+          if (cType == 'rent') rentDuePaise += out;
+          if (cType == 'electricity') elecDuePaise += out;
         }
-        if (cType == 'electricity' && currentElecPaise == 0) {
-          currentElecPaise = amt;
+
+        if (month == canonicalMonth) {
+          if (cType == 'rent' && amt > 0) {
+            currentRentPaise = amt;
+          } else if (cType == 'electricity') {
+            currentCanonicalElecCharge = r as Map<String, dynamic>;
+            currentElecPaise = amt;
+          }
+        }
+
+        String itemStatus;
+        if (out == 0) {
+          itemStatus = 'paid';
+        } else if (alloc > 0) {
+          itemStatus = 'partial';
+        } else {
+          itemStatus = 'pending';
         }
 
         chargeItems.add(_ChargeItem(
@@ -139,8 +161,46 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
           month: month,
           amountPaise: amt,
           type: cType,
-          status: status,
+          status: itemStatus,
         ));
+      }
+
+      // Electricity status for canonical month
+      String elecStatus;
+      if (elecMode == 'meter') {
+        if (currentCanonicalElecCharge != null) {
+          final amt = (currentCanonicalElecCharge['amount_paise'] as num?)?.toInt() ?? 0;
+          final out = (currentCanonicalElecCharge['outstanding_paise'] as num?)?.toInt() ?? 0;
+          final alloc = (currentCanonicalElecCharge['allocated_paise'] as num?)?.toInt() ?? 0;
+
+          if (out == 0 && amt > 0) {
+            elecStatus = 'Paid (${CurrencyFormatter.fromPaise(amt)})';
+          } else if (out == 0 && amt == 0) {
+            elecStatus = '₹0 (0 units consumed)';
+          } else if (alloc > 0) {
+            elecStatus = '${CurrencyFormatter.fromPaise(out)} due (Partially paid)';
+          } else {
+            elecStatus = '${CurrencyFormatter.fromPaise(out)} due';
+          }
+        } else {
+          // Check if meter reading exists for canonical month
+          final readingRes = await client
+              .from('meter_readings')
+              .select('id, current_reading')
+              .eq('tenancy_id', widget.tenancyId)
+              .eq('billing_month', canonicalMonth)
+              .maybeSingle();
+
+          if (readingRes != null) {
+            elecStatus = 'Reading saved / charge pending';
+          } else {
+            elecStatus = 'Awaiting reading';
+          }
+        }
+      } else if (elecMode == 'fixed') {
+        elecStatus = CurrencyFormatter.fromPaise(currentElecPaise);
+      } else {
+        elecStatus = 'No charge required';
       }
 
       // 6. Payments
@@ -151,7 +211,6 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
           .order('payment_date', ascending: false);
 
       int paymentsThisMonthPaise = 0;
-      final now = DateTime.now();
       final currentMonthPrefix = '${now.year}-${now.month.toString().padLeft(2, '0')}';
       final List<_PaymentItem> paymentItems = [];
 
@@ -210,11 +269,13 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
           startDate: startDate,
           elecMode: elecMode,
           isActive: isActive,
+          loginEnabled: loginEnabled,
           rentDuePaise: rentDuePaise,
           elecDuePaise: elecDuePaise,
           advanceBalancePaise: advanceBalancePaise,
           currentRentPaise: currentRentPaise,
           currentElecPaise: currentElecPaise,
+          elecStatus: elecStatus,
           paymentsThisMonthPaise: paymentsThisMonthPaise,
           lastMeterReading: lastMeter,
           charges: chargeItems,
@@ -231,6 +292,34 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
     }
   }
 
+  Future<void> _handleToggleLogin(bool enabled) async {
+    try {
+      final client = Supabase.instance.client;
+      await client.rpc('admin_toggle_tenant_login', params: {
+        'p_tenancy_id': widget.tenancyId,
+        'p_enabled': enabled,
+      });
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(enabled
+              ? 'Tenant login enabled. Resident can access portal.'
+              : 'Tenant login disabled. Active sessions revoked.'),
+          backgroundColor: enabled ? AppColors.success : AppColors.warning,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to update tenant login: $e'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isWide = MediaQuery.sizeOf(context).width >= 900;
@@ -241,27 +330,54 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
           ? const Center(child: CircularProgressIndicator())
           : NestedScrollView(
               headerSliverBuilder: (ctx, _) => [
-                _ProfileAppBar(data: _data!, tenancyId: widget.tenancyId),
+                _ProfileAppBar(
+                  data: _data!,
+                  tenancyId: widget.tenancyId,
+                  onRefresh: _load,
+                ),
                 _FinancialSummaryBar(data: _data!, isWide: isWide),
                 _TabBar(controller: _tabCtrl),
               ],
               body: TabBarView(
                 controller: _tabCtrl,
                 children: [
-                  _OverviewTab(data: _data!, tenancyId: widget.tenancyId),
-                  _ChargesTab(data: _data!),
-                  _PaymentsTab(data: _data!),
-                  _DetailsTab(data: _data!, tenancyId: widget.tenancyId),
+                  RefreshIndicator(
+                    onRefresh: _load,
+                    child: _OverviewTab(
+                      data: _data!,
+                      tenancyId: widget.tenancyId,
+                      onRefresh: _load,
+                    ),
+                  ),
+                  RefreshIndicator(
+                    onRefresh: _load,
+                    child: _ChargesTab(data: _data!),
+                  ),
+                  RefreshIndicator(
+                    onRefresh: _load,
+                    child: _PaymentsTab(data: _data!),
+                  ),
+                  RefreshIndicator(
+                    onRefresh: _load,
+                    child: _DetailsTab(
+                      data: _data!,
+                      tenancyId: widget.tenancyId,
+                      onToggleLogin: _handleToggleLogin,
+                    ),
+                  ),
                 ],
               ),
             ),
       floatingActionButton: _isLoading
           ? null
           : FloatingActionButton.extended(
-              onPressed: () => context.pushNamed(
-                'record-payment',
-                pathParameters: {'tenancyId': widget.tenancyId},
-              ),
+              onPressed: () async {
+                await context.pushNamed(
+                  'record-payment',
+                  pathParameters: {'tenancyId': widget.tenancyId},
+                );
+                await _load();
+              },
               icon: const Icon(Icons.add_rounded),
               label: const Text('Record payment'),
               tooltip: 'Record a payment for this tenant',
@@ -273,9 +389,14 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
 // ── Profile app bar ───────────────────────────────────────────────
 
 class _ProfileAppBar extends StatelessWidget {
-  const _ProfileAppBar({required this.data, required this.tenancyId});
+  const _ProfileAppBar({
+    required this.data,
+    required this.tenancyId,
+    required this.onRefresh,
+  });
   final _ProfileData data;
   final String tenancyId;
+  final Future<void> Function() onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -346,10 +467,15 @@ class _ProfileAppBar extends StatelessWidget {
         IconButton(
           icon: const Icon(Icons.electric_meter_outlined, color: Colors.white),
           tooltip: 'Enter meter reading',
-          onPressed: () => context.pushNamed(
-            'meter-reading',
-            pathParameters: {'tenancyId': tenancyId},
-          ),
+          onPressed: () async {
+            final updated = await context.pushNamed(
+              'meter-reading',
+              pathParameters: {'tenancyId': tenancyId},
+            );
+            if (updated == true) {
+              await onRefresh();
+            }
+          },
         ),
         IconButton(
           icon: const Icon(Icons.delete_outline_rounded, color: Colors.white70),
@@ -391,18 +517,10 @@ class _ProfileAppBar extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.share_rounded, color: Color(0xFF25D366)),
               title: const Text('Send WhatsApp dues summary'),
+              subtitle: const Text('Exact breakdown or fully-cleared notice'),
               onTap: () {
                 Navigator.pop(sheetCtx);
-                _sendWhatsAppDuesSummary(context, data);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.key_rounded, color: AppColors.action),
-              title: const Text('Share tenant login details'),
-              subtitle: const Text('Send app portal link & access info via WhatsApp'),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                _shareTenantLoginDetails(context, data);
+                _sendWhatsAppDuesSummary(context, data, tenancyId);
               },
             ),
             ListTile(
@@ -565,9 +683,14 @@ class _TabBar extends StatelessWidget {
 // ── Overview tab ──────────────────────────────────────────────────
 
 class _OverviewTab extends StatelessWidget {
-  const _OverviewTab({required this.data, required this.tenancyId});
+  const _OverviewTab({
+    required this.data,
+    required this.tenancyId,
+    required this.onRefresh,
+  });
   final _ProfileData data;
   final String tenancyId;
+  final Future<void> Function() onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -582,10 +705,13 @@ class _OverviewTab extends StatelessWidget {
                 label: 'Record payment',
                 type: AppButtonType.primary,
                 icon: Icons.payments_outlined,
-                onPressed: () => context.pushNamed(
-                  'record-payment',
-                  pathParameters: {'tenancyId': tenancyId},
-                ),
+                onPressed: () async {
+                  await context.pushNamed(
+                    'record-payment',
+                    pathParameters: {'tenancyId': tenancyId},
+                  );
+                  await onRefresh();
+                },
               ),
             ),
             const SizedBox(width: 10),
@@ -594,10 +720,15 @@ class _OverviewTab extends StatelessWidget {
                 label: 'Meter reading',
                 type: AppButtonType.outlined,
                 icon: Icons.electric_meter_outlined,
-                onPressed: () => context.pushNamed(
-                  'meter-reading',
-                  pathParameters: {'tenancyId': tenancyId},
-                ),
+                onPressed: () async {
+                  final updated = await context.pushNamed(
+                    'meter-reading',
+                    pathParameters: {'tenancyId': tenancyId},
+                  );
+                  if (updated == true) {
+                    await onRefresh();
+                  }
+                },
               ),
             ),
           ],
@@ -611,7 +742,7 @@ class _OverviewTab extends StatelessWidget {
             children: [
               _InfoRow('Billing month', data.billingMonth),
               _InfoRow('Rent charge', CurrencyFormatter.fromPaise(data.currentRentPaise)),
-              _InfoRow('Electricity charge', data.elecMode == 'meter' ? 'Awaiting reading' : CurrencyFormatter.fromPaise(data.currentElecPaise)),
+              _InfoRow('Electricity charge', data.elecStatus),
               _InfoRow('Payments received', CurrencyFormatter.fromPaise(data.paymentsThisMonthPaise)),
             ],
           ),
@@ -825,9 +956,14 @@ class _PaymentsTab extends StatelessWidget {
 // ── Details tab ───────────────────────────────────────────────────
 
 class _DetailsTab extends StatelessWidget {
-  const _DetailsTab({required this.data, required this.tenancyId});
+  const _DetailsTab({
+    required this.data,
+    required this.tenancyId,
+    required this.onToggleLogin,
+  });
   final _ProfileData data;
   final String tenancyId;
+  final void Function(bool) onToggleLogin;
 
   @override
   Widget build(BuildContext context) {
@@ -853,6 +989,29 @@ class _DetailsTab extends StatelessWidget {
               _InfoRow('Name', data.name),
               _InfoRow('Mobile', data.mobile),
               if (data.email != null) _InfoRow('Email', data.email!),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _SectionCard(
+          title: 'Portal access',
+          child: Column(
+            children: [
+              SwitchListTile.adaptive(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                title: Text('Tenant login enabled', style: AppTextStyles.bodyMedium),
+                subtitle: Text(
+                  data.loginEnabled
+                      ? 'Active — resident can log into tenant portal using mobile number'
+                      : 'Disabled — portal login is blocked and active sessions are revoked',
+                  style: AppTextStyles.caption.copyWith(
+                    color: data.loginEnabled ? AppColors.success : AppColors.error,
+                  ),
+                ),
+                value: data.loginEnabled,
+                activeColor: AppColors.action,
+                onChanged: onToggleLogin,
+              ),
             ],
           ),
         ),
@@ -890,9 +1049,9 @@ class _DetailsTab extends StatelessWidget {
 // ── Placeholder data ──────────────────────────────────────────────
 
 class _ProfileData {
-  final String name, mobile, unitId, type, billingMonth, rentEffectiveFrom, startDate, elecMode;
+  final String name, mobile, unitId, type, billingMonth, rentEffectiveFrom, startDate, elecMode, elecStatus;
   final String? email;
-  final bool isActive;
+  final bool isActive, loginEnabled;
   final int rentDuePaise, elecDuePaise, advanceBalancePaise, currentRentPaise, currentElecPaise, paymentsThisMonthPaise;
   final double lastMeterReading;
   final List<_ChargeItem> charges;
@@ -901,7 +1060,8 @@ class _ProfileData {
   const _ProfileData({
     required this.name, required this.mobile, required this.unitId,
     required this.type, required this.billingMonth, required this.rentEffectiveFrom,
-    required this.startDate, required this.elecMode, this.email, required this.isActive,
+    required this.startDate, required this.elecMode, required this.elecStatus,
+    this.email, required this.isActive, required this.loginEnabled,
     required this.rentDuePaise, required this.elecDuePaise, required this.advanceBalancePaise,
     required this.currentRentPaise, required this.currentElecPaise, required this.paymentsThisMonthPaise,
     required this.lastMeterReading, required this.charges, required this.payments,
@@ -912,17 +1072,17 @@ class _ProfileData {
   factory _ProfileData.placeholder(String id) => _ProfileData(
     name: 'Priya Sharma', mobile: '91234 56789', unitId: 'Room 07',
     type: 'Room', billingMonth: 'October 2026', rentEffectiveFrom: '01 Jan 2025',
-    startDate: '01 Jan 2025', elecMode: 'meter', email: 'priya@example.com',
-    isActive: true, rentDuePaise: 550000, elecDuePaise: 135000,
+    startDate: '01 Jan 2025', elecMode: 'meter', elecStatus: 'Awaiting reading', email: 'priya@example.com',
+    isActive: true, loginEnabled: true, rentDuePaise: 550000, elecDuePaise: 135000,
     advanceBalancePaise: 1100000, currentRentPaise: 550000, currentElecPaise: 135000,
     paymentsThisMonthPaise: 0, lastMeterReading: 1450.5,
-    charges: [
+    charges: const [
       _ChargeItem(label: 'Rent', month: 'Oct 2026', amountPaise: 550000, type: 'rent', status: 'pending'),
       _ChargeItem(label: 'Electricity', month: 'Oct 2026', amountPaise: 135000, type: 'electricity', status: 'pending'),
       _ChargeItem(label: 'Rent', month: 'Sep 2026', amountPaise: 550000, type: 'rent', status: 'paid'),
       _ChargeItem(label: 'Electricity', month: 'Sep 2026', amountPaise: 98000, type: 'electricity', status: 'paid'),
     ],
-    payments: [
+    payments: const [
       _PaymentItem(date: '02 Sep 2026', amountPaise: 648000, method: 'Cash', reference: null),
       _PaymentItem(date: '05 Aug 2026', amountPaise: 648000, method: 'Online', reference: 'UPI/1234567'),
     ],
@@ -1100,97 +1260,55 @@ Future<void> _showSetPasswordDialog(
   );
 }
 
-Future<void> _sendWhatsAppDuesSummary(BuildContext context, _ProfileData data) async {
-  final message = StringBuffer();
-  message.writeln('📋 *Rentify Payment Notice*');
-  message.writeln('Dear ${data.name},');
-  message.writeln('Here is your dues summary for *${data.unitId}*:');
-  message.writeln('');
-  message.writeln('• *Rent Due:* ${CurrencyFormatter.fromPaise(data.rentDuePaise)}');
-  message.writeln('• *Electricity Due:* ${CurrencyFormatter.fromPaise(data.elecDuePaise)}');
-  if (data.advanceBalancePaise > 0) {
-    message.writeln('• *Advance / Deposit Balance:* ${CurrencyFormatter.fromPaise(data.advanceBalancePaise)}');
-  }
-  message.writeln('━━━━━━━━━━━━━━━━━');
-  message.writeln('👉 *Total Outstanding: ${CurrencyFormatter.fromPaise(data.totalDuePaise)}*');
-  message.writeln('');
-  message.writeln('Please clear the pending balance at your earliest convenience. Thank you!');
-
-  final cleanMobile = data.mobile.replaceAll(RegExp(r'\D'), '');
-  final phone = cleanMobile.length == 10 ? '91$cleanMobile' : cleanMobile;
-  final encodedMsg = Uri.encodeComponent(message.toString());
-
-  final uri = Uri.parse(
-    phone.isNotEmpty
-        ? 'https://wa.me/$phone?text=$encodedMsg'
-        : 'https://wa.me/?text=$encodedMsg',
-  );
-
+Future<void> _sendWhatsAppDuesSummary(
+  BuildContext context,
+  _ProfileData data,
+  String tenancyId,
+) async {
   try {
-    if (kIsWeb) {
-      await launchUrl(uri, webOnlyWindowName: '_blank');
-    } else {
-      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!launched) {
-        await launchUrl(uri, mode: LaunchMode.platformDefault);
+    final client = Supabase.instance.client;
+    final allocRes = await client
+        .from('charge_allocation_totals')
+        .select('charge_type, billing_month, amount_paise, allocated_paise, outstanding_paise')
+        .eq('tenancy_id', tenancyId)
+        .order('billing_month', ascending: true);
+
+    final List<OutstandingRentMonth> rentMonths = [];
+    int totalRentDuePaise = 0;
+    int totalElecDuePaise = 0;
+
+    for (final r in (allocRes as List<dynamic>)) {
+      final cType = (r['charge_type'] as String?) ?? 'rent';
+      final out = (r['outstanding_paise'] as num?)?.toInt() ?? 0;
+      final bMonth = (r['billing_month'] as String?) ?? '';
+
+      if (out > 0) {
+        if (cType == 'rent') {
+          totalRentDuePaise += out;
+          rentMonths.add(OutstandingRentMonth(
+            billingMonth: bMonth,
+            duePaise: out,
+          ));
+        } else if (cType == 'electricity') {
+          totalElecDuePaise += out;
+        }
       }
     }
+
+    final payload = WhatsAppDuesSummaryPayload(
+      tenantName: data.name,
+      mobile: data.mobile,
+      outstandingRentMonths: rentMonths,
+      totalRentDuePaise: totalRentDuePaise,
+      totalElecDuePaise: totalElecDuePaise,
+    );
+
+    await WhatsAppService.shareDuesSummary(context: context, payload: payload);
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Could not open WhatsApp: $e'),
-          backgroundColor: AppColors.error,
-        ),
-      );
-    }
-  }
-}
-
-Future<void> _shareTenantLoginDetails(BuildContext context, _ProfileData data) async {
-  final message = StringBuffer();
-  message.writeln('🔑 *Rentify Tenant Portal Access*');
-  message.writeln('Dear ${data.name},');
-  message.writeln('You have been registered as a resident for *${data.unitId}*.');
-  message.writeln('');
-  message.writeln('📱 You can view your monthly rent dues, electricity meter readings, advance deposit balance, and payment receipts anytime on our portal:');
-  message.writeln('👉 https://rentify-sandy-delta.vercel.app');
-  message.writeln('');
-  message.writeln('🔐 *Your Login Credentials:*');
-  message.writeln('• *User ID / Mobile:* ${data.mobile}');
-  message.writeln('• *Password:* ${data.mobile}');
-  message.writeln('');
-  message.writeln('1. Open the portal link or open the Rentify App');
-  message.writeln('2. Enter your registered mobile as User ID');
-  message.writeln('3. Enter your mobile number as Password');
-  message.writeln('4. Access your private tenant dashboard securely!');
-  message.writeln('');
-  message.writeln('Thank you!');
-
-  final cleanMobile = data.mobile.replaceAll(RegExp(r'\D'), '');
-  final phone = cleanMobile.length == 10 ? '91$cleanMobile' : cleanMobile;
-  final encodedMsg = Uri.encodeComponent(message.toString());
-
-  final uri = Uri.parse(
-    phone.isNotEmpty
-        ? 'https://wa.me/$phone?text=$encodedMsg'
-        : 'https://wa.me/?text=$encodedMsg',
-  );
-
-  try {
-    if (kIsWeb) {
-      await launchUrl(uri, webOnlyWindowName: '_blank');
-    } else {
-      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!launched) {
-        await launchUrl(uri, mode: LaunchMode.platformDefault);
-      }
-    }
-  } catch (e) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not open WhatsApp: $e'),
+          content: Text('Failed to prepare WhatsApp dues notice: $e'),
           backgroundColor: AppColors.error,
         ),
       );

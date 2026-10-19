@@ -445,6 +445,7 @@ class _SummaryStatsRow extends StatelessWidget {
         color: AppColors.amountDue,
         icon: Icons.home_work_outlined,
         bgColor: AppColors.errorBg,
+        onTap: () => context.go(Routes.tenantDirectory),
       ),
       _StatCard(
         label: 'Electricity due',
@@ -452,6 +453,7 @@ class _SummaryStatsRow extends StatelessWidget {
         color: AppColors.warning,
         icon: Icons.bolt_rounded,
         bgColor: AppColors.warningBg,
+        onTap: () => context.push(Routes.billing),
       ),
       _StatCard(
         label: 'Collected this month',
@@ -459,6 +461,7 @@ class _SummaryStatsRow extends StatelessWidget {
         color: AppColors.success,
         icon: Icons.check_circle_outline_rounded,
         bgColor: AppColors.successBg,
+        onTap: () => context.push(Routes.reports),
       ),
       _StatCard(
         label: 'Active tenants',
@@ -466,6 +469,7 @@ class _SummaryStatsRow extends StatelessWidget {
         color: AppColors.action,
         icon: Icons.people_outline_rounded,
         bgColor: AppColors.actionBg,
+        onTap: () => context.go(Routes.tenantDirectory),
       ),
     ];
 
@@ -502,50 +506,58 @@ class _StatCard extends StatelessWidget {
     required this.color,
     required this.icon,
     required this.bgColor,
+    this.onTap,
   });
   final String label;
   final String value;
   final Color color;
   final IconData icon;
   final Color bgColor;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: bgColor,
-                  borderRadius: BorderRadius.circular(8),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: bgColor,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, size: 18, color: color),
                 ),
-                child: Icon(icon, size: 18, color: color),
-              ),
-              const Spacer(),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            value,
-            style: AppTextStyles.currencyMedium.copyWith(color: color),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 4),
-          Text(label, style: AppTextStyles.caption, maxLines: 1),
-        ],
+                const Spacer(),
+                if (onTap != null)
+                  const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: AppColors.inkMuted),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              value,
+              style: AppTextStyles.currencyMedium.copyWith(color: color),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 4),
+            Text(label, style: AppTextStyles.caption, maxLines: 1),
+          ],
+        ),
       ),
     );
   }
@@ -574,12 +586,14 @@ class _AlertsCard extends StatelessWidget {
               message:
                   '${data.awaitingMeterReadings} tenant${data.awaitingMeterReadings > 1 ? 's' : ''} awaiting meter reading',
               color: AppColors.warning,
+              onTap: () => context.push(Routes.billing),
             ),
           if (data.pendingBills > 0)
             _AlertRow(
               icon: Icons.receipt_outlined,
               message: '${data.pendingBills} bills need attention',
               color: AppColors.warning,
+              onTap: () => context.push(Routes.billing),
             ),
         ],
       ),
@@ -592,26 +606,33 @@ class _AlertRow extends StatelessWidget {
     required this.icon,
     required this.message,
     required this.color,
+    this.onTap,
   });
   final IconData icon;
   final String message;
   final Color color;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              message,
-              style: AppTextStyles.bodyMedium.copyWith(color: color),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: color),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message,
+                style: AppTextStyles.bodyMedium.copyWith(color: color, fontWeight: FontWeight.w600),
+              ),
             ),
-          ),
-        ],
+            const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.warning),
+          ],
+        ),
       ),
     );
   }

@@ -1,12 +1,18 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/currency_formatter.dart';
 
-/// Reports screen — monthly summary + per-tenant breakdown
+/// Reports screen — month-scoped summary, per-tenant breakdown, and real CSV export
 class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key});
 
@@ -15,56 +21,162 @@ class ReportsScreen extends ConsumerStatefulWidget {
 }
 
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
-  String _selectedMonth = 'Oct 2026';
+  late DateTime _selectedPeriod;
+  late final List<DateTime> _availableMonths;
   bool _isLoading = true;
+  String? _errorMessage;
   _ReportData? _data;
-
-  final List<String> _months = [
-    'Oct 2026', 'Sep 2026', 'Aug 2026', 'Jul 2026',
-    'Jun 2026', 'May 2026', 'Apr 2026', 'Mar 2026',
-  ];
 
   @override
   void initState() {
     super.initState();
+    final now = DateTime.now();
+    _selectedPeriod = DateTime(now.year, now.month, 1);
+
+    // Generate dynamic list of past 24 months down to current month
+    _availableMonths = List.generate(24, (i) {
+      return DateTime(now.year, now.month - i, 1);
+    });
+
     _load();
   }
 
+  String get _canonicalBillingMonth =>
+      '${_selectedPeriod.year}-${_selectedPeriod.month.toString().padLeft(2, '0')}-01';
+
+  String get _displayMonth => DateFormat('MMMM yyyy').format(_selectedPeriod);
+
   Future<void> _load() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
     try {
       final client = Supabase.instance.client;
-      final tenantsRes = await client.from('tenancies').select('id, tenant_name, unit_id').eq('is_active', true);
-      final List<dynamic> tenants = tenantsRes as List<dynamic>;
+      final canonicalMonth = _canonicalBillingMonth;
+      final startOfMonth = DateTime(_selectedPeriod.year, _selectedPeriod.month, 1);
+      final startOfNextMonth = DateTime(_selectedPeriod.year, _selectedPeriod.month + 1, 1);
 
-      final chargesRes = await client.from('charges').select('tenancy_id, amount_paise');
-      final paymentsRes = await client.from('payments').select('tenancy_id, amount_paise');
-      
-      final charges = (chargesRes as List<dynamic>);
-      final payments = (paymentsRes as List<dynamic>);
+      // 1. Tenancies active during or started before this month
+      final tenanciesRes = await client
+          .from('tenancies')
+          .select('id, tenant_name, unit_id, start_date, is_active')
+          .order('unit_id', ascending: true);
 
-      int totalCharged = 0;
-      for (final c in charges) {
-        totalCharged += ((c['amount_paise'] as num?) ?? 0).toInt();
+      final List<dynamic> tenancies = tenanciesRes as List<dynamic>;
+
+      // 2. Query charge allocation totals for this canonical month
+      final allocRes = await client
+          .from('charge_allocation_totals')
+          .select('charge_id, tenancy_id, charge_type, billing_month, amount_paise, allocated_paise, outstanding_paise')
+          .eq('billing_month', canonicalMonth);
+
+      final List<dynamic> allocations = allocRes as List<dynamic>;
+
+      // 3. Query payments collected strictly within this calendar month
+      final paymentsRes = await client
+          .from('payments')
+          .select('id, tenancy_id, amount_paise, payment_date, method')
+          .gte('payment_date', startOfMonth.toIso8601String().substring(0, 10))
+          .lt('payment_date', startOfNextMonth.toIso8601String().substring(0, 10));
+
+      final List<dynamic> payments = paymentsRes as List<dynamic>;
+
+      // Aggregate global metrics
+      int totalChargedPaise = 0;
+      int rentChargedPaise = 0;
+      int elecChargedPaise = 0;
+      int chargesSettledPaise = 0;
+      int outstandingPaise = 0;
+
+      for (final a in allocations) {
+        final amt = ((a['amount_paise'] as num?) ?? 0).toInt();
+        final alloc = ((a['allocated_paise'] as num?) ?? 0).toInt();
+        final out = ((a['outstanding_paise'] as num?) ?? 0).toInt();
+        final cType = (a['charge_type'] as String?) ?? 'rent';
+
+        totalChargedPaise += amt;
+        chargesSettledPaise += alloc;
+        outstandingPaise += out;
+
+        if (cType == 'rent') {
+          rentChargedPaise += amt;
+        } else if (cType == 'electricity') {
+          elecChargedPaise += amt;
+        }
       }
-      int totalCollected = 0;
+
+      int totalCollectedInMonthPaise = 0;
       for (final p in payments) {
-        totalCollected += ((p['amount_paise'] as num?) ?? 0).toInt();
+        totalCollectedInMonthPaise += ((p['amount_paise'] as num?) ?? 0).toInt();
       }
 
+      // Build per-tenant report rows
       final rows = <_ReportRowData>[];
-      int paidCount = 0;
-      for (final t in tenants) {
-        final tId = t['id'];
-        final tCharges = charges.where((c) => c['tenancy_id'] == tId).fold<int>(0, (sum, c) => sum + ((c['amount_paise'] as num?) ?? 0).toInt());
-        final tPayments = payments.where((p) => p['tenancy_id'] == tId).fold<int>(0, (sum, p) => sum + ((p['amount_paise'] as num?) ?? 0).toInt());
-        if (tCharges > 0 && tPayments >= tCharges) paidCount++;
-        if (tCharges > 0 || tPayments > 0) {
+      int fullyPaidTenants = 0;
+      int activeTenantsCount = 0;
+
+      for (final t in tenancies) {
+        final tId = t['id'] as String;
+        final tName = (t['tenant_name'] as String?) ?? 'Tenant';
+        final tUnit = (t['unit_id'] as String?) ?? '—';
+        final tIsActive = (t['is_active'] as bool?) ?? true;
+
+        if (tIsActive) activeTenantsCount++;
+
+        final tAllocs = allocations.where((a) => a['tenancy_id'] == tId).toList();
+        final tPayments = payments.where((p) => p['tenancy_id'] == tId).toList();
+
+        int tRentCharged = 0;
+        int tElecCharged = 0;
+        int tCharged = 0;
+        int tSettled = 0;
+        int tOut = 0;
+
+        for (final a in tAllocs) {
+          final amt = ((a['amount_paise'] as num?) ?? 0).toInt();
+          final alloc = ((a['allocated_paise'] as num?) ?? 0).toInt();
+          final out = ((a['outstanding_paise'] as num?) ?? 0).toInt();
+          final cType = (a['charge_type'] as String?) ?? 'rent';
+
+          tCharged += amt;
+          tSettled += alloc;
+          tOut += out;
+
+          if (cType == 'rent') tRentCharged += amt;
+          if (cType == 'electricity') tElecCharged += amt;
+        }
+
+        int tCollectedThisMonth = 0;
+        for (final p in tPayments) {
+          tCollectedThisMonth += ((p['amount_paise'] as num?) ?? 0).toInt();
+        }
+
+        String tenantStatus;
+        if (tCharged == 0) {
+          tenantStatus = 'no_charge';
+        } else if (tOut == 0) {
+          tenantStatus = 'paid';
+          fullyPaidTenants++;
+        } else if (tSettled > 0) {
+          tenantStatus = 'partial';
+        } else {
+          tenantStatus = 'unpaid';
+        }
+
+        // Include in table if tenant has charges, collections, or is active
+        if (tCharged > 0 || tCollectedThisMonth > 0 || tIsActive) {
           rows.add(_ReportRowData(
-            name: (t['tenant_name'] as String?) ?? 'Tenant',
-            unit: (t['unit_id'] as String?) ?? '—',
-            chargedPaise: tCharges,
-            collectedPaise: tPayments,
+            name: tName,
+            unit: tUnit,
+            rentChargedPaise: tRentCharged,
+            elecChargedPaise: tElecCharged,
+            totalChargedPaise: tCharged,
+            settledPaise: tSettled,
+            collectedThisMonthPaise: tCollectedThisMonth,
+            outstandingPaise: tOut,
+            status: tenantStatus,
           ));
         }
       }
@@ -73,21 +185,95 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       setState(() {
         _isLoading = false;
         _data = _ReportData(
-          month: _selectedMonth,
-          totalChargedPaise: totalCharged,
-          totalCollectedPaise: totalCollected,
-          outstandingPaise: (totalCharged - totalCollected).clamp(0, double.infinity).toInt(),
-          paidCount: paidCount,
-          totalTenants: tenants.length,
+          billingMonth: canonicalMonth,
+          displayMonth: _displayMonth,
+          totalChargedPaise: totalChargedPaise,
+          rentChargedPaise: rentChargedPaise,
+          elecChargedPaise: elecChargedPaise,
+          chargesSettledPaise: chargesSettledPaise,
+          totalCollectedInMonthPaise: totalCollectedInMonthPaise,
+          outstandingPaise: outstandingPaise,
+          paidTenantsCount: fullyPaidTenants,
+          totalActiveTenants: activeTenantsCount,
           rows: rows,
         );
       });
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Error loading monthly report: $e');
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _data = _ReportData.empty(_selectedMonth);
+        _errorMessage = 'Failed to load report data: $e';
       });
+    }
+  }
+
+  Future<void> _exportCsv() async {
+    if (_data == null || _data!.rows.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No data to export for this month.')),
+      );
+      return;
+    }
+
+    final csv = StringBuffer();
+    // Headers & metadata
+    csv.writeln('Rentify Monthly Financial Report');
+    csv.writeln('Billing Period,"${_data!.displayMonth}" (${_data!.billingMonth})');
+    csv.writeln('Generated At,"${DateTime.now().toIso8601String()}"');
+    csv.writeln('Total Charged (INR),${(_data!.totalChargedPaise / 100).toStringAsFixed(2)}');
+    csv.writeln('Rent Charged (INR),${(_data!.rentChargedPaise / 100).toStringAsFixed(2)}');
+    csv.writeln('Electricity Charged (INR),${(_data!.elecChargedPaise / 100).toStringAsFixed(2)}');
+    csv.writeln('Charges Settled (INR),${(_data!.chargesSettledPaise / 100).toStringAsFixed(2)}');
+    csv.writeln('Payments Collected in Month (INR),${(_data!.totalCollectedInMonthPaise / 100).toStringAsFixed(2)}');
+    csv.writeln('Outstanding Balance (INR),${(_data!.outstandingPaise / 100).toStringAsFixed(2)}');
+    csv.writeln('Settlement Rate,${(_data!.settlementRate * 100).toStringAsFixed(1)}%');
+    csv.writeln('');
+    csv.writeln('Tenant Name,Unit,Rent Charged (INR),Electricity Charged (INR),Total Charged (INR),Settled (INR),Collected In Month (INR),Outstanding (INR),Status');
+
+    for (final r in _data!.rows) {
+      final cleanName = r.name.replaceAll('"', '""');
+      final cleanUnit = r.unit.replaceAll('"', '""');
+      csv.writeln(
+        '"$cleanName","$cleanUnit",'
+        '${(r.rentChargedPaise / 100).toStringAsFixed(2)},'
+        '${(r.elecChargedPaise / 100).toStringAsFixed(2)},'
+        '${(r.totalChargedPaise / 100).toStringAsFixed(2)},'
+        '${(r.settledPaise / 100).toStringAsFixed(2)},'
+        '${(r.collectedThisMonthPaise / 100).toStringAsFixed(2)},'
+        '${(r.outstandingPaise / 100).toStringAsFixed(2)},'
+        '${r.status.toUpperCase()}',
+      );
+    }
+
+    final csvString = csv.toString();
+    final filename = 'rentify_report_${_data!.billingMonth.substring(0, 7)}.csv';
+
+    try {
+      final uri = Uri.dataFromString(csvString, mimeType: 'text/csv', encoding: utf8);
+      if (kIsWeb) {
+        await launchUrl(uri);
+      } else {
+        await Clipboard.setData(ClipboardData(text: csvString));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Report copied to clipboard ($filename). Ready to paste/share!'),
+              backgroundColor: AppColors.success,
+            ),
+          );
+        }
+      }
+    } catch (_) {
+      await Clipboard.setData(ClipboardData(text: csvString));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Report CSV copied to clipboard ($filename)'),
+            backgroundColor: AppColors.action,
+          ),
+        );
+      }
     }
   }
 
@@ -99,36 +285,40 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         title: Text('Reports', style: AppTextStyles.h2),
         actions: [
           IconButton(
-            icon: const Icon(Icons.download_outlined),
+            icon: const Icon(Icons.file_download_outlined),
             tooltip: 'Export CSV',
-            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Export feature coming soon')),
-            ),
+            onPressed: _exportCsv,
           ),
         ],
       ),
       body: Column(
         children: [
-          // Month selector
+          // Dynamic Month selector
           Container(
             color: AppColors.surface,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             child: Row(
               children: [
-                Text('Month:', style: AppTextStyles.bodyMedium),
+                const Icon(Icons.calendar_month_outlined, size: 20, color: AppColors.action),
+                const SizedBox(width: 8),
+                Text('Period:', style: AppTextStyles.bodyMedium),
                 const SizedBox(width: 12),
                 Expanded(
                   child: SizedBox(
                     height: 36,
                     child: ListView.builder(
                       scrollDirection: Axis.horizontal,
-                      itemCount: _months.length,
+                      itemCount: _availableMonths.length,
                       itemBuilder: (_, i) {
-                        final m = _months[i];
-                        final isSelected = m == _selectedMonth;
+                        final dt = _availableMonths[i];
+                        final isSelected = dt.year == _selectedPeriod.year &&
+                            dt.month == _selectedPeriod.month;
+                        final label = DateFormat('MMM yyyy').format(dt);
+
                         return GestureDetector(
                           onTap: () {
-                            setState(() => _selectedMonth = m);
+                            if (isSelected) return;
+                            setState(() => _selectedPeriod = dt);
                             _load();
                           },
                           child: AnimatedContainer(
@@ -139,10 +329,12 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                               color: isSelected ? AppColors.action : AppColors.surfaceVariant,
                               borderRadius: BorderRadius.circular(20),
                             ),
-                            child: Text(
-                              m,
-                              style: AppTextStyles.captionBold.copyWith(
-                                color: isSelected ? Colors.white : AppColors.inkMuted,
+                            child: Center(
+                              child: Text(
+                                label,
+                                style: AppTextStyles.captionBold.copyWith(
+                                  color: isSelected ? Colors.white : AppColors.inkMuted,
+                                ),
                               ),
                             ),
                           ),
@@ -154,51 +346,124 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
               ],
             ),
           ),
-
           const Divider(height: 1),
 
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
-                : ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      // Summary cards
-                      _SummaryRow(data: _data!),
-                      const SizedBox(height: 20),
+                : _errorMessage != null
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.error_outline_rounded, size: 48, color: AppColors.error),
+                              const SizedBox(height: 12),
+                              Text(_errorMessage!, style: AppTextStyles.bodyMedium, textAlign: TextAlign.center),
+                              const SizedBox(height: 16),
+                              ElevatedButton.icon(
+                                onPressed: _load,
+                                icon: const Icon(Icons.refresh_rounded),
+                                label: const Text('Retry'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : RefreshIndicator(
+                        onRefresh: _load,
+                        child: ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: [
+                            // Summary stats
+                            _SummaryRow(data: _data!),
+                            const SizedBox(height: 16),
 
-                      // Collection rate
-                      _CollectionRate(data: _data!),
-                      const SizedBox(height: 20),
+                            // Charge Breakdown
+                            _ChargeTypeBreakdown(data: _data!),
+                            const SizedBox(height: 16),
 
-                      // Per-tenant table
-                      Text('Per-tenant breakdown', style: AppTextStyles.h3),
-                      const SizedBox(height: 12),
-                      if (_data!.rows.isEmpty)
-                        Center(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 32),
-                            child: Column(
+                            // Collection Rate
+                            _CollectionRate(data: _data!),
+                            const SizedBox(height: 20),
+
+                            // Table header & Per-tenant breakdown
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                const Icon(Icons.analytics_outlined, size: 48, color: AppColors.inkMuted),
-                                const SizedBox(height: 12),
-                                Text('No billing records for this month', style: AppTextStyles.bodyMedium),
-                                const SizedBox(height: 4),
-                                Text('Generate bills or record payments to see reports here.', style: AppTextStyles.caption),
+                                Text('Per-tenant breakdown', style: AppTextStyles.h3),
+                                Text(
+                                  '${_data!.rows.length} records',
+                                  style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                                ),
                               ],
                             ),
-                          ),
-                        )
-                      else
-                        ..._data!.rows.map((r) => _ReportRow(row: r)),
-                    ],
-                  ),
+                            const SizedBox(height: 12),
+
+                            if (_data!.rows.isEmpty ||
+                                (_data!.totalChargedPaise == 0 &&
+                                    _data!.totalCollectedInMonthPaise == 0))
+                              Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 40),
+                                  child: Column(
+                                    children: [
+                                      const Icon(Icons.analytics_outlined, size: 48, color: AppColors.inkMuted),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        'No report data available for $_displayMonth',
+                                        style: AppTextStyles.bodyMedium,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'No charges or collections found for this specific billing period.',
+                                        style: AppTextStyles.caption,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      OutlinedButton(
+                                        onPressed: () {
+                                          final now = DateTime.now();
+                                          setState(() => _selectedPeriod = DateTime(now.year, now.month, 1));
+                                          _load();
+                                        },
+                                        child: const Text('Go to current month'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            else ...[
+                              // Column headers
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: AppColors.surfaceVariant,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(flex: 3, child: Text('Tenant', style: AppTextStyles.captionBold)),
+                                    Expanded(flex: 2, child: Text('Charged', style: AppTextStyles.captionBold, textAlign: TextAlign.right)),
+                                    Expanded(flex: 2, child: Text('Settled', style: AppTextStyles.captionBold, textAlign: TextAlign.right)),
+                                    Expanded(flex: 2, child: Text('Due', style: AppTextStyles.captionBold, textAlign: TextAlign.right)),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              ..._data!.rows.map((r) => _ReportRow(row: r)),
+                            ],
+                          ],
+                        ),
+                      ),
           ),
         ],
       ),
     );
   }
 }
+
+// ── Summary Cards ─────────────────────────────────────────────────
 
 class _SummaryRow extends StatelessWidget {
   const _SummaryRow({required this.data});
@@ -208,33 +473,44 @@ class _SummaryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(child: _StatCard(
-          label: 'Total charged',
-          value: CurrencyFormatter.fromPaise(data.totalChargedPaise),
-          icon: Icons.receipt_outlined,
-          color: AppColors.action,
-        )),
+        Expanded(
+          child: _StatCard(
+            label: 'Total charged',
+            value: CurrencyFormatter.fromPaise(data.totalChargedPaise),
+            icon: Icons.receipt_long_outlined,
+            color: AppColors.action,
+          ),
+        ),
         const SizedBox(width: 10),
-        Expanded(child: _StatCard(
-          label: 'Total collected',
-          value: CurrencyFormatter.fromPaise(data.totalCollectedPaise),
-          icon: Icons.payments_outlined,
-          color: AppColors.success,
-        )),
+        Expanded(
+          child: _StatCard(
+            label: 'Collected in mo.',
+            value: CurrencyFormatter.fromPaise(data.totalCollectedInMonthPaise),
+            icon: Icons.payments_outlined,
+            color: AppColors.success,
+          ),
+        ),
         const SizedBox(width: 10),
-        Expanded(child: _StatCard(
-          label: 'Outstanding',
-          value: CurrencyFormatter.fromPaise(data.outstandingPaise),
-          icon: Icons.account_balance_wallet_outlined,
-          color: data.outstandingPaise > 0 ? AppColors.amountDue : AppColors.success,
-        )),
+        Expanded(
+          child: _StatCard(
+            label: 'Outstanding',
+            value: CurrencyFormatter.fromPaise(data.outstandingPaise),
+            icon: Icons.account_balance_wallet_outlined,
+            color: data.outstandingPaise > 0 ? AppColors.amountDue : AppColors.success,
+          ),
+        ),
       ],
     );
   }
 }
 
 class _StatCard extends StatelessWidget {
-  const _StatCard({required this.label, required this.value, required this.icon, required this.color});
+  const _StatCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+  });
   final String label, value;
   final IconData icon;
   final Color color;
@@ -251,7 +527,7 @@ class _StatCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: color),
+          Icon(icon, size: 20, color: color),
           const SizedBox(height: 8),
           Text(value, style: AppTextStyles.currencySmall.copyWith(color: color)),
           const SizedBox(height: 4),
@@ -262,15 +538,85 @@ class _StatCard extends StatelessWidget {
   }
 }
 
+class _ChargeTypeBreakdown extends StatelessWidget {
+  const _ChargeTypeBreakdown({required this.data});
+  final _ReportData data;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _SubBreakdown(
+            icon: Icons.home_outlined,
+            label: 'Room rent',
+            amount: CurrencyFormatter.fromPaise(data.rentChargedPaise),
+            color: AppColors.action,
+          ),
+          Container(width: 1, height: 32, color: AppColors.border),
+          _SubBreakdown(
+            icon: Icons.bolt_outlined,
+            label: 'Electricity',
+            amount: CurrencyFormatter.fromPaise(data.elecChargedPaise),
+            color: AppColors.warning,
+          ),
+          Container(width: 1, height: 32, color: AppColors.border),
+          _SubBreakdown(
+            icon: Icons.check_circle_outline,
+            label: 'Settled dues',
+            amount: CurrencyFormatter.fromPaise(data.chargesSettledPaise),
+            color: AppColors.success,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SubBreakdown extends StatelessWidget {
+  const _SubBreakdown({
+    required this.icon,
+    required this.label,
+    required this.amount,
+    required this.color,
+  });
+  final IconData icon;
+  final String label, amount;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 6),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: AppTextStyles.caption),
+            Text(amount, style: AppTextStyles.bodyMedium.copyWith(color: color)),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
 class _CollectionRate extends StatelessWidget {
   const _CollectionRate({required this.data});
   final _ReportData data;
 
   @override
   Widget build(BuildContext context) {
-    final rate = data.totalChargedPaise > 0
-        ? (data.totalCollectedPaise / data.totalChargedPaise).clamp(0.0, 1.0)
-        : 0.0;
+    final rate = data.settlementRate;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -284,11 +630,15 @@ class _CollectionRate extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Collection rate', style: AppTextStyles.h3),
+              Text('Month settlement rate', style: AppTextStyles.h3),
               Text(
                 '${(rate * 100).toStringAsFixed(0)}%',
                 style: AppTextStyles.currencyMedium.copyWith(
-                  color: rate > 0.8 ? AppColors.success : rate > 0.5 ? AppColors.warning : AppColors.error,
+                  color: rate > 0.8
+                      ? AppColors.success
+                      : rate > 0.5
+                          ? AppColors.warning
+                          : AppColors.error,
                 ),
               ),
             ],
@@ -301,12 +651,19 @@ class _CollectionRate extends StatelessWidget {
               minHeight: 8,
               backgroundColor: AppColors.surfaceVariant,
               valueColor: AlwaysStoppedAnimation(
-                rate > 0.8 ? AppColors.success : rate > 0.5 ? AppColors.warning : AppColors.error,
+                rate > 0.8
+                    ? AppColors.success
+                    : rate > 0.5
+                        ? AppColors.warning
+                        : AppColors.error,
               ),
             ),
           ),
           const SizedBox(height: 8),
-          Text('${data.paidCount} of ${data.totalTenants} tenants paid', style: AppTextStyles.caption),
+          Text(
+            '${data.paidTenantsCount} of ${data.totalActiveTenants} active residents fully cleared for ${data.displayMonth}',
+            style: AppTextStyles.caption,
+          ),
         ],
       ),
     );
@@ -320,7 +677,7 @@ class _ReportRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: AppColors.surface,
@@ -331,15 +688,24 @@ class _ReportRow extends StatelessWidget {
         children: [
           Expanded(
             flex: 3,
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(row.name, style: AppTextStyles.bodyMedium),
-              Text(row.unit, style: AppTextStyles.caption),
-            ]),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(row.name, style: AppTextStyles.bodyMedium),
+                Row(
+                  children: [
+                    Text(row.unit, style: AppTextStyles.caption),
+                    const SizedBox(width: 6),
+                    _StatusBadge(status: row.status),
+                  ],
+                ),
+              ],
+            ),
           ),
           Expanded(
             flex: 2,
             child: Text(
-              CurrencyFormatter.fromPaise(row.chargedPaise),
+              CurrencyFormatter.fromPaise(row.totalChargedPaise),
               style: AppTextStyles.currencySmall,
               textAlign: TextAlign.right,
             ),
@@ -347,7 +713,7 @@ class _ReportRow extends StatelessWidget {
           Expanded(
             flex: 2,
             child: Text(
-              CurrencyFormatter.fromPaise(row.collectedPaise),
+              CurrencyFormatter.fromPaise(row.settledPaise),
               style: AppTextStyles.currencySmall.copyWith(color: AppColors.success),
               textAlign: TextAlign.right,
             ),
@@ -369,33 +735,90 @@ class _ReportRow extends StatelessWidget {
   }
 }
 
-// Data
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({required this.status});
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color, bg) = switch (status) {
+      'paid' => ('PAID', AppColors.success, AppColors.successBg),
+      'partial' => ('PARTIAL', AppColors.warning, AppColors.warningBg),
+      'unpaid' => ('DUE', AppColors.error, AppColors.errorBg),
+      _ => ('NO BILL', AppColors.inkMuted, AppColors.surfaceVariant),
+    };
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 9,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+// ── Models ────────────────────────────────────────────────────────
+
 class _ReportData {
-  final String month;
-  final int totalChargedPaise, totalCollectedPaise, outstandingPaise;
-  final int paidCount, totalTenants;
+  final String billingMonth;
+  final String displayMonth;
+  final int totalChargedPaise;
+  final int rentChargedPaise;
+  final int elecChargedPaise;
+  final int chargesSettledPaise;
+  final int totalCollectedInMonthPaise;
+  final int outstandingPaise;
+  final int paidTenantsCount;
+  final int totalActiveTenants;
   final List<_ReportRowData> rows;
 
   const _ReportData({
-    required this.month, required this.totalChargedPaise,
-    required this.totalCollectedPaise, required this.outstandingPaise,
-    required this.paidCount, required this.totalTenants, required this.rows,
+    required this.billingMonth,
+    required this.displayMonth,
+    required this.totalChargedPaise,
+    required this.rentChargedPaise,
+    required this.elecChargedPaise,
+    required this.chargesSettledPaise,
+    required this.totalCollectedInMonthPaise,
+    required this.outstandingPaise,
+    required this.paidTenantsCount,
+    required this.totalActiveTenants,
+    required this.rows,
   });
 
-  factory _ReportData.empty(String month) => _ReportData(
-    month: month,
-    totalChargedPaise: 0,
-    totalCollectedPaise: 0,
-    outstandingPaise: 0,
-    paidCount: 0,
-    totalTenants: 0,
-    rows: const [],
-  );
+  double get settlementRate => totalChargedPaise > 0
+      ? (chargesSettledPaise / totalChargedPaise).clamp(0.0, 1.0)
+      : 0.0;
 }
 
 class _ReportRowData {
   final String name, unit;
-  final int chargedPaise, collectedPaise;
-  const _ReportRowData({required this.name, required this.unit, required this.chargedPaise, required this.collectedPaise});
-  int get outstandingPaise => chargedPaise - collectedPaise;
+  final int rentChargedPaise;
+  final int elecChargedPaise;
+  final int totalChargedPaise;
+  final int settledPaise;
+  final int collectedThisMonthPaise;
+  final int outstandingPaise;
+  final String status;
+
+  const _ReportRowData({
+    required this.name,
+    required this.unit,
+    required this.rentChargedPaise,
+    required this.elecChargedPaise,
+    required this.totalChargedPaise,
+    required this.settledPaise,
+    required this.collectedThisMonthPaise,
+    required this.outstandingPaise,
+    required this.status,
+  });
 }

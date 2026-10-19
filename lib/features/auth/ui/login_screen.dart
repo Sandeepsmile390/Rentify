@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/config/env.dart';
 import '../../../core/routing/routes.dart';
+import '../../../core/services/biometric_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/validators.dart';
@@ -30,6 +31,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   bool _obscurePassword = true;
   bool _isLoading = false;
   String? _errorMessage;
+  bool _canUseBiometrics = false;
 
   late final AnimationController _animController;
   late final Animation<double> _fadeIn;
@@ -43,6 +45,48 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     );
     _fadeIn = CurvedAnimation(parent: _animController, curve: Curves.easeOut);
     _animController.forward();
+    _checkBiometrics();
+  }
+
+  Future<void> _checkBiometrics() async {
+    try {
+      final enabled = await BiometricService.isBiometricEnabled();
+      final hasSession = Supabase.instance.client.auth.currentSession != null;
+      if (mounted) {
+        setState(() => _canUseBiometrics = enabled && hasSession);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _unlockWithBiometrics() async {
+    final success = await BiometricService.authenticate(
+      reason: 'Scan fingerprint or face to unlock Rentify',
+    );
+    if (!success || !mounted) return;
+
+    final client = Supabase.instance.client;
+    final user = client.auth.currentUser;
+    if (user != null) {
+      String role = '';
+      try {
+        final profile = await client
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .maybeSingle();
+        role = (profile?['role'] as String?) ?? '';
+      } catch (_) {}
+      if (role.isEmpty) {
+        role = (user.userMetadata?['role'] as String?) ?? 'tenant';
+      }
+
+      if (!mounted) return;
+      if (role == 'admin') {
+        context.go(Routes.adminDashboard);
+      } else {
+        context.go(Routes.tenantHome);
+      }
+    }
   }
 
   @override
@@ -72,8 +116,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     if (idLower == 'sandeepsmile390' || idLower == 'admin@rentify.app') {
       loginEmail = 'sandeepsmile390@rentify.app';
     } else if (cleanDigits.length >= 10 && !identifier.contains('@')) {
-      // 2. Tenant Mobile Number Login: Lookup account email securely
-      // If identifier is a 10-digit mobile number and password is blank, auto-default password to the mobile number
+      // 2. Tenant Mobile Number Login: Lookup account email securely via RPC
       if (password.isEmpty) {
         password = cleanDigits;
         _passwordController.text = cleanDigits;
@@ -90,39 +133,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           loginEmail = res.toString().trim();
         } else {
           setState(() {
-            _errorMessage = 'No active tenancy account found with mobile number $cleanDigits. Please contact your landlord.';
+            _errorMessage = 'No active tenancy account found with mobile number $cleanDigits, or portal access has been disabled by landlord.';
           });
           return;
         }
       } catch (e) {
-        // Safe offline dev fallback only when no live backend exists
-        if (kDebugMode && Env.supabaseUrl.contains('placeholder')) {
-          ref.read(demoAuthProvider.notifier).loginAsTenant(
-            email: '$cleanDigits@tenant.rentify.app',
-          );
-          if (mounted) context.go(Routes.tenantHome);
-          return;
-        }
         setState(() {
-          _errorMessage = 'Unable to resolve mobile account. Please sign in with your email or check connection.';
+          _errorMessage = 'Unable to resolve mobile account. Please verify your mobile number or check network.';
         });
         return;
       }
     }
 
     try {
-      // Dev placeholder mode only
-      if (kDebugMode && Env.supabaseUrl.contains('placeholder')) {
-        if (loginEmail.toLowerCase().contains('admin')) {
-          ref.read(demoAuthProvider.notifier).loginAsAdmin(email: loginEmail);
-          if (mounted) context.go(Routes.adminDashboard);
-        } else {
-          ref.read(demoAuthProvider.notifier).loginAsTenant(email: loginEmail);
-          if (mounted) context.go(Routes.tenantHome);
-        }
-        return;
-      }
-
       // Live Supabase Authentication
       final res = await Supabase.instance.client.auth.signInWithPassword(
         email: loginEmail,
@@ -325,9 +348,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                             icon: Icons.login_rounded,
                           ),
 
-                          const SizedBox(height: 16),
-                          // Biometric hint (shown only if possible)
-                          const _BiometricHint(),
+                          if (_canUseBiometrics) ...[
+                            const SizedBox(height: 12),
+                            OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                side: const BorderSide(color: AppColors.action),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              icon: const Icon(Icons.fingerprint_rounded, color: AppColors.action),
+                              label: const Text('Unlock with Biometrics', style: TextStyle(color: AppColors.action, fontWeight: FontWeight.w600)),
+                              onPressed: _isLoading ? null : _unlockWithBiometrics,
+                            ),
+                          ] else ...[
+                            const SizedBox(height: 16),
+                            const _BiometricHint(),
+                          ],
                         ],
                       ),
                     ),

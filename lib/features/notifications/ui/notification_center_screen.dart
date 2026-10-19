@@ -282,34 +282,113 @@ class _NotificationCenterScreenState
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : _items.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.notifications_none_rounded,
-                          size: 56, color: AppColors.inkMuted),
-                      const SizedBox(height: 16),
-                      Text('No notifications', style: AppTextStyles.h3),
-                      const SizedBox(height: 8),
-                      Text('You\'re all caught up!',
-                          style: AppTextStyles.bodyRegular),
-                    ],
-                  ),
-                )
-              : ListView.separated(
-                  itemCount: _items.length,
-                  separatorBuilder: (_, __) =>
-                      const Divider(height: 1),
-                  itemBuilder: (_, i) => _NotifTile(
-                    item: _items[i],
-                    onTap: () {
-                      setState(() {
-                        _items[i] = _items[i].copyWith(isRead: true);
-                      });
-                    },
-                  ),
-                ),
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: _items.isEmpty
+                  ? ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: [
+                        SizedBox(height: MediaQuery.of(context).size.height * 0.25),
+                        Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.notifications_none_rounded,
+                                  size: 56, color: AppColors.inkMuted),
+                              const SizedBox(height: 16),
+                              Text('No notifications', style: AppTextStyles.h3),
+                              const SizedBox(height: 8),
+                              Text('You\'re all caught up! Swipe down to refresh.',
+                                  style: AppTextStyles.bodyRegular),
+                            ],
+                          ),
+                        ),
+                      ],
+                    )
+                  : ListView.separated(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      itemCount: _items.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, i) {
+                        final item = _items[i];
+                        return Dismissible(
+                          key: Key(item.id),
+                          direction: DismissDirection.startToEnd, // Swipe right to remove
+                          background: Container(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            color: AppColors.error,
+                            child: const Row(
+                              children: [
+                                Icon(Icons.delete_sweep_rounded, color: Colors.white),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Remove notification',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          onDismissed: (direction) async {
+                            final removedItem = item;
+                            final removedIndex = i;
+                            HapticFeedback.mediumImpact();
+                            setState(() {
+                              _items.removeAt(removedIndex);
+                            });
+
+                            try {
+                              await Supabase.instance.client
+                                  .from('notifications')
+                                  .delete()
+                                  .eq('id', removedItem.id);
+                            } catch (_) {}
+
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).clearSnackBars();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Removed: "${removedItem.title}"'),
+                                  action: SnackBarAction(
+                                    label: 'Undo',
+                                    textColor: Colors.amber,
+                                    onPressed: () async {
+                                      setState(() {
+                                        _items.insert(removedIndex, removedItem);
+                                      });
+                                      try {
+                                        await Supabase.instance.client
+                                            .from('notifications')
+                                            .insert({
+                                          'id': removedItem.id,
+                                          'title': removedItem.title,
+                                          'body': removedItem.body,
+                                          'category': removedItem.category,
+                                          'is_read': removedItem.isRead,
+                                        });
+                                      } catch (_) {}
+                                    },
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                          child: _NotifTile(
+                            item: item,
+                            onTap: () {
+                              setState(() {
+                                _items[i] = item.copyWith(isRead: true);
+                              });
+                            },
+                          ),
+                        );
+                      },
+                    ),
+            ),
     );
   }
 }
@@ -324,7 +403,7 @@ class _NotifTile extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Container(
-        color: item.isRead ? null : AppColors.actionBg.withOpacity(0.3),
+        color: item.isRead ? null : AppColors.actionBg.withValues(alpha: 0.3),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
