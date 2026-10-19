@@ -38,6 +38,8 @@ class RentifyApp extends ConsumerStatefulWidget {
 class _RentifyAppState extends ConsumerState<RentifyApp> with WidgetsBindingObserver {
   bool _isLocked = false;
   bool _isAuthenticating = false;
+  DateTime? _pausedAt;
+  DateTime? _lastUnlockedAt;
 
   @override
   void initState() {
@@ -45,7 +47,7 @@ class _RentifyAppState extends ConsumerState<RentifyApp> with WidgetsBindingObse
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       NotificationService.initializeAndPrompt();
-      _checkBiometricLock();
+      _checkInitialBiometricLock();
     });
   }
 
@@ -57,51 +59,86 @@ class _RentifyAppState extends ConsumerState<RentifyApp> with WidgetsBindingObse
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _checkBiometricLock();
+    if (state == AppLifecycleState.paused) {
+      // Only record pause if we are NOT in the middle of a biometric prompt
+      if (!_isAuthenticating) {
+        _pausedAt = DateTime.now();
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      // If we are currently showing or resolving a biometric prompt, ignore resume
+      if (_isAuthenticating) return;
+
+      // If unlocked recently (within 4 seconds), ignore spurious resume event
+      if (_lastUnlockedAt != null &&
+          DateTime.now().difference(_lastUnlockedAt!).inSeconds < 4) {
+        return;
+      }
+
+      final pausedTime = _pausedAt;
+      _pausedAt = null;
+
+      // Only lock if app was genuinely sent to background for at least 1 second
+      if (pausedTime != null &&
+          DateTime.now().difference(pausedTime).inMilliseconds >= 1000) {
+        _lockAndPrompt();
+      }
     }
   }
 
-  Future<void> _checkBiometricLock() async {
+  Future<void> _checkInitialBiometricLock() async {
     if (kIsWeb) return;
     final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return; // Unauthenticated users will be handled by login screen
+    if (user == null) return; // Unauthenticated users are handled by login screen
 
     final isEnabled = await BiometricService.isBiometricEnabled();
     if (!isEnabled) return;
 
-    if (_isAuthenticating) return;
+    _lockAndPrompt();
+  }
 
+  Future<void> _lockAndPrompt() async {
+    if (kIsWeb) return;
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    final isEnabled = await BiometricService.isBiometricEnabled();
+    if (!isEnabled) return;
+
+    if (!mounted) return;
     setState(() {
       _isLocked = true;
-      _isAuthenticating = true;
     });
 
-    final success = await BiometricService.authenticate(
-      reason: 'Scan fingerprint or face to unlock Rentify',
-    );
-
-    if (mounted) {
-      setState(() {
-        _isLocked = !success;
-        _isAuthenticating = false;
-      });
-    }
+    // Auto-prompt once on lock screen
+    _triggerBiometricUnlock();
   }
 
   Future<void> _triggerBiometricUnlock() async {
     if (_isAuthenticating) return;
     setState(() => _isAuthenticating = true);
 
-    final success = await BiometricService.authenticate(
-      reason: 'Scan fingerprint or face to unlock Rentify',
-    );
+    try {
+      final success = await BiometricService.authenticate(
+        reason: 'Scan fingerprint or face to unlock Rentify',
+      );
 
-    if (mounted) {
-      setState(() {
-        _isLocked = !success;
-        _isAuthenticating = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isAuthenticating = false;
+          if (success) {
+            _isLocked = false;
+            _lastUnlockedAt = DateTime.now();
+            _pausedAt = null;
+          } else {
+            // Keep locked so user can tap "Unlock with Biometrics" manually or Sign Out
+            _isLocked = true;
+          }
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _isAuthenticating = false);
+      }
     }
   }
 
@@ -114,6 +151,8 @@ class _RentifyAppState extends ConsumerState<RentifyApp> with WidgetsBindingObse
       setState(() {
         _isLocked = false;
         _isAuthenticating = false;
+        _lastUnlockedAt = null;
+        _pausedAt = null;
       });
       ref.read(appRouterProvider).go(Routes.login);
     }
