@@ -488,8 +488,24 @@ class _TenantHeader extends StatelessWidget {
     );
   }
 
-  void _showPaymentOptions(BuildContext context, int totalDuePaise) {
-    const upiId = 'repeshmehra360-1@okhdfcbanck';
+  Future<void> _showPaymentOptions(BuildContext context, int totalDuePaise) async {
+    String upiId = 'repeshmehra360-1@okhdfcbank';
+    try {
+      final client = Supabase.instance.client;
+      final upiRes = await client
+          .from('system_settings')
+          .select('value')
+          .eq('key', 'landlord_upi_id')
+          .maybeSingle();
+      if (upiRes != null &&
+          upiRes['value'] != null &&
+          upiRes['value'].toString().trim().isNotEmpty) {
+        upiId = upiRes['value'].toString().trim();
+      }
+    } catch (_) {}
+
+    if (!context.mounted) return;
+
     const landlordName = 'Prabhu Lal Das';
     const landlordPhone = '6299578325';
     final amtFormatted = CurrencyFormatter.fromPaise(totalDuePaise);
@@ -543,7 +559,7 @@ class _TenantHeader extends StatelessWidget {
                       const SizedBox(width: 8),
                       InkWell(
                         onTap: () {
-                          Clipboard.setData(const ClipboardData(text: upiId));
+                          Clipboard.setData(ClipboardData(text: upiId));
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text('UPI ID copied to clipboard!'),

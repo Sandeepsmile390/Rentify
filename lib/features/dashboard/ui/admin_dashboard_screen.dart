@@ -1619,7 +1619,7 @@ class _TenantElecCard extends StatelessWidget {
                   backgroundColor: AppColors.navy.withValues(alpha: 0.1),
                   child: Text(
                     group.tenantName.isNotEmpty ? group.tenantName[0].toUpperCase() : '?',
-                    style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.navy),
+                    style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.navy),
                   ),
                 ),
                 const SizedBox(width: 12),

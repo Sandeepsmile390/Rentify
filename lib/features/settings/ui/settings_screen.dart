@@ -34,6 +34,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final String _currency = 'INR';
   String _electricityRate = '9.00';
   int _billingDay = 1;
+  String _upiId = 'repeshmehra360-1@okhdfcbank';
   bool _isLoadingSettings = true;
 
   @override
@@ -48,6 +49,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     int day = 1;
     String rate = '9.00';
+    String upi = 'repeshmehra360-1@okhdfcbank';
 
     try {
       final client = Supabase.instance.client;
@@ -59,6 +61,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
       if (settingRes != null && settingRes['value'] != null) {
         day = int.tryParse(settingRes['value'].toString()) ?? 1;
+      }
+
+      final upiRes = await client
+          .from('system_settings')
+          .select('value')
+          .eq('key', 'landlord_upi_id')
+          .maybeSingle();
+
+      if (upiRes != null &&
+          upiRes['value'] != null &&
+          upiRes['value'].toString().trim().isNotEmpty) {
+        upi = upiRes['value'].toString().trim();
       }
 
       final rateRes = await client
@@ -80,6 +94,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _biometricEnabled = enabled;
       _billingDay = day;
       _electricityRate = rate;
+      _upiId = upi;
       _isLoadingSettings = false;
     });
   }
@@ -166,9 +181,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ]),
 
-                // ── Billing section (Admin only) ───────────────────
+                // ── Billing & Payments section (Admin only) ───────
                 if (isAdmin)
-                  _SettingsSection('Billing', [
+                  _SettingsSection('Billing & Payments', [
+                    _SettingsTile(
+                      icon: Icons.qr_code_2_rounded,
+                      title: 'UPI payment ID',
+                      subtitle: '$_upiId (Used by tenants to pay dues)',
+                      onTap: () => _showEditUpiDialog(),
+                    ),
                     _SettingsTile(
                       icon: Icons.electric_meter_outlined,
                       title: 'Electricity rate',
@@ -276,6 +297,153 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 const SizedBox(height: 40),
               ],
             ),
+    );
+  }
+
+  void _showEditUpiDialog() {
+    final ctrl = TextEditingController(text: _upiId);
+    String? errorText;
+
+    showDialog(
+      context: context,
+      builder: (dCtx) => StatefulBuilder(
+        builder: (dCtx, setDialogState) => AlertDialog(
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.actionBg,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.qr_code_2_rounded, color: AppColors.action, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text('Update UPI Payment ID', style: AppTextStyles.h2),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Set the landlord UPI ID (VPA) where all tenant rent and electricity payments are directed when they tap "Pay Dues".',
+                  style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: ctrl,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: InputDecoration(
+                    labelText: 'Landlord UPI ID / VPA',
+                    hintText: 'e.g. name@okhdfcbank or 9876543210@paytm',
+                    prefixIcon: const Icon(Icons.account_balance_wallet_outlined),
+                    errorText: errorText,
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.clear_rounded, size: 18),
+                      onPressed: () {
+                        ctrl.clear();
+                        setDialogState(() => errorText = null);
+                      },
+                    ),
+                  ),
+                  onChanged: (_) {
+                    if (errorText != null) {
+                      setDialogState(() => errorText = null);
+                    }
+                  },
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.action),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Payment apps (GPay, PhonePe, Paytm, BHIM) will automatically detect the registered account name upon redirection.',
+                          style: AppTextStyles.caption.copyWith(fontSize: 11),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dCtx).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final newUpi = ctrl.text.trim().toLowerCase();
+                if (newUpi.isEmpty) {
+                  setDialogState(() => errorText = 'UPI ID cannot be empty');
+                  return;
+                }
+                final parts = newUpi.split('@');
+                if (parts.length != 2 || parts[0].isEmpty || parts[1].isEmpty) {
+                  setDialogState(() => errorText = 'Invalid UPI ID format (must be username@bank)');
+                  return;
+                }
+
+                Navigator.of(dCtx).pop();
+
+                try {
+                  final client = Supabase.instance.client;
+                  await client.from('system_settings').upsert({
+                    'key': 'landlord_upi_id',
+                    'value': newUpi,
+                    'description': 'Primary UPI VPA ID for tenant rent and electricity collections',
+                    'updated_at': DateTime.now().toIso8601String(),
+                  });
+
+                  setState(() => _upiId = newUpi);
+
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Row(
+                          children: [
+                            const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                            const SizedBox(width: 10),
+                            Expanded(child: Text('UPI ID successfully updated to $newUpi')),
+                          ],
+                        ),
+                        backgroundColor: AppColors.success,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Failed to update UPI ID: $e'),
+                        backgroundColor: AppColors.error,
+                      ),
+                    );
+                  }
+                }
+              },
+              child: const Text('Save UPI ID'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
