@@ -1,6 +1,6 @@
-# Tenant Profile & Migration Plan: Vinod
+# Tenant Profile: Vinod
 
-## 1. Basic Information
+- **Database Tenancy ID**: `316a43cf-a2a9-4b98-ae3a-bdd083975608`
 - **Tenant Name**: Vinod
 - **Mobile Number**: `7033979945`
 - **Unit / Room ID**: Room 8
@@ -13,7 +13,7 @@
 - **Rent Rate History**:
   - **Feb 2026 – Jul 2026**: ₹4,500.00 / month
   - **Aug 2026 onwards**: **₹6,700.00 / month** *(Increased from ₹4,500 to ₹6,700)*
-- **Database Status**: *Pending User Confirmation before inserting*
+- **Database Status**: **Synchronized in Supabase Database**
 
 ---
 
