@@ -272,7 +272,7 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
               Container(
                 width: 56,
                 height: 56,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   color: AppColors.successBg,
                   shape: BoxShape.circle,
                 ),
@@ -382,7 +382,7 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.calendar_month_outlined, size: 18, color: AppColors.inkMuted),
+                        Icon(Icons.calendar_month_outlined, size: 18, color: AppColors.inkMuted),
                         const SizedBox(width: 10),
                         Text('Billing Period:', style: AppTextStyles.bodyMedium),
                         const SizedBox(width: 12),
@@ -435,7 +435,7 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
                             Text(_previousReadingMonth, style: AppTextStyles.caption),
                           ],
                         ),
-                        const Icon(Icons.arrow_forward_rounded, color: AppColors.inkMuted),
+                        Icon(Icons.arrow_forward_rounded, color: AppColors.inkMuted),
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [

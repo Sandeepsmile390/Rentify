@@ -7,6 +7,7 @@ import '../../../core/routing/routes.dart';
 import '../../../core/services/biometric_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/theme/theme_provider.dart';
 import '../../../core/utilities/validators.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/app_text_field.dart';
@@ -241,9 +242,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  const Align(alignment: Alignment.topRight, child: ThemeToggleButton()),
+                  const SizedBox(height: 8),
                   // ── Logo & tagline ──────────────────────────
                   _buildLogo(),
-                  SizedBox(height: isWide ? 48 : 40),
+                  SizedBox(height: isWide ? 40 : 32),
 
                   // ── Card ────────────────────────────────────
                   Container(
@@ -393,7 +396,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                             ),
                             child: Row(
                               children: [
-                                const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.inkMuted),
+                                Icon(Icons.info_outline_rounded, size: 16, color: AppColors.inkMuted),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
@@ -519,7 +522,7 @@ class _BiometricHint extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Icon(Icons.fingerprint_rounded,
+        Icon(Icons.fingerprint_rounded,
             size: 18, color: AppColors.inkMuted),
         const SizedBox(width: 6),
         Text(

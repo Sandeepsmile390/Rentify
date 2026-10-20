@@ -538,7 +538,7 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
                     child: const Icon(Icons.person_outline_rounded, color: AppColors.action),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -884,7 +884,7 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Add internal comments, payment agreements, or notes for this tenant:',
               style: TextStyle(fontSize: 13, color: AppColors.inkMuted),
             ),
@@ -1843,7 +1843,7 @@ class _ChargesTab extends StatelessWidget {
                       ),
                       child: Column(
                         children: [
-                          const Icon(Icons.hourglass_empty_rounded, size: 32, color: AppColors.inkMuted),
+                          Icon(Icons.hourglass_empty_rounded, size: 32, color: AppColors.inkMuted),
                           const SizedBox(height: 8),
                           Text('No payment chunks recorded yet', style: AppTextStyles.bodyMedium),
                           const SizedBox(height: 4),
@@ -1918,7 +1918,7 @@ class _ChargesTab extends StatelessWidget {
                                 child: Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Icon(Icons.chat_bubble_outline_rounded, size: 13, color: AppColors.inkMuted),
+                                    Icon(Icons.chat_bubble_outline_rounded, size: 13, color: AppColors.inkMuted),
                                     const SizedBox(width: 6),
                                     Expanded(
                                       child: Text(
@@ -2057,7 +2057,7 @@ class _ChargesTab extends StatelessWidget {
                     ),
                   ]),
                   const SizedBox(width: 6),
-                  const Icon(Icons.chevron_right_rounded, size: 16, color: AppColors.inkMuted),
+                  Icon(Icons.chevron_right_rounded, size: 16, color: AppColors.inkMuted),
                 ],
               ),
             ),
@@ -2266,11 +2266,11 @@ class _MeterTab extends StatelessWidget {
           Container(
             width: 52,
             height: 52,
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               color: AppColors.surfaceVariant,
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.power_off_rounded, color: AppColors.inkMuted, size: 28),
+            child: Icon(Icons.power_off_rounded, color: AppColors.inkMuted, size: 28),
           ),
           const SizedBox(height: 12),
           Text('No Meter / Not Available', style: AppTextStyles.h3),
@@ -2469,7 +2469,7 @@ class _MeterTab extends StatelessWidget {
               ),
               child: Column(
                 children: [
-                  const Icon(Icons.bolt_rounded, size: 40, color: AppColors.inkMuted),
+                  Icon(Icons.bolt_rounded, size: 40, color: AppColors.inkMuted),
                   const SizedBox(height: 12),
                   Text('No electricity charges generated yet', style: AppTextStyles.bodyMedium),
                   const SizedBox(height: 4),
@@ -2573,7 +2573,7 @@ class _MeterTab extends StatelessWidget {
               ),
               child: Column(
                 children: [
-                  const Icon(Icons.speed_rounded, size: 40, color: AppColors.inkMuted),
+                  Icon(Icons.speed_rounded, size: 40, color: AppColors.inkMuted),
                   const SizedBox(height: 12),
                   Text('No meter readings recorded yet', style: AppTextStyles.bodyMedium),
                   const SizedBox(height: 4),
@@ -2720,7 +2720,7 @@ class _DetailsTab extends StatelessWidget {
           color: AppColors.surface,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
-            side: const BorderSide(color: AppColors.border),
+            side: BorderSide(color: AppColors.border),
           ),
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -3282,7 +3282,7 @@ Future<void> _showElectricityModeDialog(
                   child: const Icon(Icons.bolt_rounded, color: AppColors.action),
                 ),
                 const SizedBox(width: 12),
-                const Expanded(
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -3365,7 +3365,7 @@ Future<void> _showElectricityModeDialog(
                         color: AppColors.surfaceVariant,
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: const Row(
+                      child: Row(
                         children: [
                           Icon(Icons.info_outline, size: 20, color: AppColors.inkMuted),
                           SizedBox(width: 8),
@@ -3545,7 +3545,7 @@ Future<void> _showReviseRentDialog(
                         title: const Text('Effective Month / Date', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
                         subtitle: Text(
                           DateFormat('dd MMM yyyy').format(effectiveDate),
-                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.ink),
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.ink),
                         ),
                         trailing: const Icon(Icons.calendar_month, color: AppColors.action),
                         onTap: () async {
@@ -3576,7 +3576,7 @@ Future<void> _showReviseRentDialog(
                         const SizedBox(height: 20),
                         const Divider(),
                         const SizedBox(height: 8),
-                        const Text(
+                        Text(
                           'Rent Rate History',
                           style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.inkMuted),
                         ),
@@ -3598,12 +3598,12 @@ Future<void> _showReviseRentDialog(
                                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                                     ),
                                     if (reason != null && reason.isNotEmpty)
-                                      Text(reason, style: const TextStyle(fontSize: 11, color: AppColors.inkMuted)),
+                                      Text(reason, style: TextStyle(fontSize: 11, color: AppColors.inkMuted)),
                                   ],
                                 ),
                                 Text(
                                   'From $from',
-                                  style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
+                                  style: TextStyle(fontSize: 12, color: AppColors.inkMuted),
                                 ),
                               ],
                             ),

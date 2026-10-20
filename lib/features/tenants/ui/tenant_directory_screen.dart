@@ -7,6 +7,7 @@ import '../../../core/routing/routes.dart';
 import '../../../core/services/app_cache_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/theme/theme_provider.dart';
 import '../../../core/utilities/avatar_helper.dart';
 import '../../../core/utilities/currency_formatter.dart';
 import '../../../core/widgets/status_chip.dart';
@@ -160,6 +161,7 @@ class _TenantDirectoryScreenState
       appBar: AppBar(
         title: Text('Tenants', style: AppTextStyles.h2),
         actions: [
+          const ThemeToggleButton(),
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Refresh',
@@ -469,7 +471,7 @@ class _TableRow extends StatelessWidget {
     return InkWell(
       onTap: () => context.push('${Routes.tenantProfile}/${tenant.tenancyId}'),
       child: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           border: Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -501,7 +503,7 @@ class _TableRow extends StatelessWidget {
                           borderRadius: BorderRadius.circular(4),
                           border: Border.all(color: AppColors.border, width: 0.8),
                         ),
-                        child: const Text(
+                        child: Text(
                           'Left / Vacated',
                           style: TextStyle(
                             fontSize: 10,
@@ -564,7 +566,7 @@ class _TableRow extends StatelessWidget {
             SizedBox(
               width: 40,
               child: PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert_rounded, size: 20, color: AppColors.inkMuted),
+                icon: Icon(Icons.more_vert_rounded, size: 20, color: AppColors.inkMuted),
                 tooltip: 'Tenant actions',
                 onSelected: (val) {
                   if (val == 'view') {
@@ -670,7 +672,7 @@ class _MobileTenantTile extends StatelessWidget {
                 borderRadius: BorderRadius.circular(4),
                 border: Border.all(color: AppColors.border, width: 0.8),
               ),
-              child: const Text(
+              child: Text(
                 'Vacated',
                 style: TextStyle(
                   fontSize: 10,
@@ -714,7 +716,7 @@ class _MobileTenantTile extends StatelessWidget {
             ],
           ),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert_rounded, size: 20, color: AppColors.inkMuted),
+            icon: Icon(Icons.more_vert_rounded, size: 20, color: AppColors.inkMuted),
             tooltip: 'Actions',
             onSelected: (val) {
               if (val == 'view') {

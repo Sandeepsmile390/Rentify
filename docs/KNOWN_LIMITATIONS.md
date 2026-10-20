@@ -16,9 +16,11 @@ This document provides transparent, honest documentation of system boundaries, p
   - Transparent: The landlord previews the formatted message and explicitly taps Send in WhatsApp.
   - Limitation: The application cannot automatically detect if the message was delivered, read, or replied to by the recipient. It only confirms that the message was handed off to the WhatsApp application.
 
-### 1.2 Push Notifications (FCM)
-- **Current Implementation:** Full in-app notification center is active, rendering category-filtered notifications, unread badges, and mark-all-as-read actions.
-- **Limitation:** Background system tray push notifications require a linked Google Firebase project (`google-services.json` on Android and APNs keys on iOS). Because external Firebase credentials are not provisioned in this repository, background push notifications are marked **BLOCKED** for production until Firebase keys are linked.
+### 1.2 Background Push Notifications & WorkManager
+- **Current Implementation:** Rentify features dual-channel notification delivery:
+  1. **Foreground / Active App:** Realtime PostgreSQL subscription via Supabase channels delivering instantaneous UI updates and audio/vibration feedback.
+  2. **Background / App Killed:** Native Android `WorkManager` background worker (`callbackDispatcher`) scheduled periodically (every 15 minutes) with battery-conscious network constraints. Polls unread notifications and triggers high-priority heads-up system notifications in the Android notification shade with sound and vibration.
+- **Limitation:** On iOS or Android devices with extreme vendor battery-saving restrictions (e.g. MIUI/ColorOS aggressive background process killing), users should whitelist Rentify in "Battery Optimization" settings to ensure continuous 15-minute background polling without interruption.
 
 ### 1.3 Database Backup Retention
 - **Current Implementation:** Automated managed daily backups via Supabase PostgreSQL 17.

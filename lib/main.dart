@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:workmanager/workmanager.dart';
 
 import 'core/config/env.dart';
 import 'core/routing/app_router.dart';
@@ -12,7 +13,18 @@ import 'core/services/update_service.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_text_styles.dart';
 import 'core/theme/app_theme.dart';
+import 'core/theme/theme_provider.dart';
 import 'features/auth/providers/auth_provider.dart';
+
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((task, inputData) async {
+    try {
+      await NotificationService.checkBackgroundNotifications();
+    } catch (_) {}
+    return Future.value(true);
+  });
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +33,25 @@ Future<void> main() async {
     url: Env.supabaseUrl,
     anonKey: Env.supabaseAnonKey,
   );
+
+  if (!kIsWeb) {
+    try {
+      Workmanager().initialize(
+        callbackDispatcher,
+      );
+      Workmanager().registerPeriodicTask(
+        'rentify_bg_alerts_task',
+        'checkBackgroundNotifications',
+        frequency: const Duration(minutes: 15),
+        existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+        constraints: Constraints(
+          networkType: NetworkType.connected,
+        ),
+      );
+    } catch (e) {
+      debugPrint('Notice starting background workmanager: $e');
+    }
+  }
 
   runApp(
     const ProviderScope(
@@ -164,10 +195,13 @@ class _RentifyAppState extends ConsumerState<RentifyApp> with WidgetsBindingObse
   @override
   Widget build(BuildContext context) {
     final router = ref.watch(appRouterProvider);
+    final themeMode = ref.watch(themeModeProvider);
     return MaterialApp.router(
       title: 'Rentify',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
+      themeMode: themeMode,
       routerConfig: router,
       builder: (context, child) {
         return Stack(

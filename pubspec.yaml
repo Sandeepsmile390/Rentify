@@ -1,7 +1,7 @@
 name: rentify
 description: Rentify — Production rent management platform for Android and Web.
 publish_to: 'none'
-version: 1.2.0+5
+version: 1.2.1+6
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -47,6 +47,11 @@ dependencies:
   cupertino_icons: ^1.0.8
   permission_handler: 11.3.1
   flutter_local_notifications: ^20.1.0
+  workmanager: ^0.9.2
+
+dependency_overrides:
+  workmanager_apple:
+    path: plugins/workmanager_apple
 
 dev_dependencies:
   flutter_test:

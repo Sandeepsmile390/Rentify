@@ -479,7 +479,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.folder_open_rounded, size: 56, color: AppColors.inkMuted),
+                        Icon(Icons.folder_open_rounded, size: 56, color: AppColors.inkMuted),
                         const SizedBox(height: 16),
                         Text(
                           _isTenant ? 'No documents shared yet' : 'No documents uploaded yet',

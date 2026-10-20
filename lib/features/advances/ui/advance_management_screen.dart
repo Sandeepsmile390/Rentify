@@ -217,7 +217,7 @@ class _AdvanceManagementScreenState
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Icon(Icons.account_balance_wallet_outlined,
+                              Icon(Icons.account_balance_wallet_outlined,
                                   size: 48, color: AppColors.inkMuted),
                               const SizedBox(height: 12),
                               Text('No transactions yet',

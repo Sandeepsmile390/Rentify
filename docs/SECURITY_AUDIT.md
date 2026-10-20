@@ -22,10 +22,11 @@ The Rentify application architecture enforces a **Zero-Trust Client** security m
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **SEC-01** | **HIGH** | PostgreSQL RLS | Recursive query in `profiles` RLS policy caused infinite recursion during admin checks | Subqueries on `public.profiles` within `profiles` RLS policy | Created `public.is_admin()` `SECURITY DEFINER` function; updated policies | **RESOLVED & VERIFIED** |
 | **SEC-02** | **HIGH** | Client State | Hardcoded mock data in UI previously allowed unauthenticated view of demo tenant balances | `_DashboardData.placeholder()` and `_TenantItem.placeholders()` | Removed all mock factories; connected screens directly to authenticated Supabase RLS queries | **RESOLVED & VERIFIED** |
-| **SEC-03** | **MEDIUM** | Storage Bucket | Identity documents (Aadhaar/PAN) could be exposed if bucket marked public | `documents` table & Supabase Storage | Configured private bucket (`public: false`) with 60-second time-limited signed URLs | **RESOLVED & VERIFIED** |
+| **SEC-03** | **MEDIUM** | Storage Bucket | Identity documents (Aadhaar/PAN) could be exposed if bucket marked public | `documents` table & Supabase Storage | Configured private bucket (`public: false`) with 300-second time-limited signed URLs | **RESOLVED & VERIFIED** |
 | **SEC-04** | **MEDIUM** | Authentication | Client-side 1-click login button could allow unauthorized role assumption in production | "Demo Admin Login" button in `login_screen.dart` | Removed demo button entirely; forced standard email/password authentication | **RESOLVED & VERIFIED** |
 | **SEC-05** | **LOW** | Web Hosting | SPA routing on Vercel could leak server headers or directory listings without strict configuration | `vercel.json` headers | Configured `X-Content-Type-Options: nosniff` and SPA rewrite rules | **RESOLVED & VERIFIED** |
 | **SEC-06** | **INFO** | Android Build | Android APK built with standard Flutter debug keystore for staging verification | `app-release.apk` | Documented production keystore generation and signing procedure in `RELEASE_READINESS.md` | **DOCUMENTED** |
+| **SEC-07** | **HIGH** | Database Hardening | Legacy public schema tables lacked Row Level Security | Database schema inspection of `pg_tables` | Enabled RLS on all 7 legacy tables (`users`, `tenants`, `bills`, `comments`, `chats`, `sessions`, `properties`) with admin-only isolation | **RESOLVED & VERIFIED** |
 
 ---
 

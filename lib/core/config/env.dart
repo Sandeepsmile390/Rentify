@@ -27,10 +27,10 @@ class Env {
   /// Build/version info (populated by CI).
   static const String appVersion = String.fromEnvironment(
     'APP_VERSION',
-    defaultValue: '1.2.0+5',
+    defaultValue: '1.2.1+6',
   );
   static const String buildNumber = String.fromEnvironment(
     'BUILD_NUMBER',
-    defaultValue: '5',
+    defaultValue: '6',
   );
 }

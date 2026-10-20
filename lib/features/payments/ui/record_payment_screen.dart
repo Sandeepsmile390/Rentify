@@ -204,7 +204,7 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
             children: [
               Container(
                 width: 56, height: 56,
-                decoration: const BoxDecoration(color: AppColors.successBg, shape: BoxShape.circle),
+                decoration: BoxDecoration(color: AppColors.successBg, shape: BoxShape.circle),
                 child: const Icon(Icons.check_rounded, color: AppColors.success, size: 32),
               ),
               const SizedBox(height: 16),

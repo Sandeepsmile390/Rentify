@@ -16,6 +16,7 @@ import '../../../core/services/notification_service.dart';
 import '../../../core/services/app_cache_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/theme/theme_provider.dart';
 import '../../auth/providers/auth_provider.dart';
 
 /// Settings screen — admin configuration, security, billing schedule, and exports
@@ -154,6 +155,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ]),
 
+                // ── Appearance & Theme section ────────────────────
+                _SettingsSection('Appearance & Theme', [
+                  _SwitchTile(
+                    icon: Icons.dark_mode_outlined,
+                    title: 'Dark Mode (Obsidian)',
+                    subtitle: 'Deep obsidian theme optimized for low-light and AMOLED screens',
+                    value: ref.watch(themeModeProvider) == ThemeMode.dark,
+                    onChanged: (v) => ref.read(themeModeProvider.notifier).setMode(v ? ThemeMode.dark : ThemeMode.light),
+                  ),
+                ]),
+
                 // ── Billing section (Admin only) ───────────────────
                 if (isAdmin)
                   _SettingsSection('Billing', [
@@ -236,7 +248,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   const _SettingsTile(
                     icon: Icons.info_outline_rounded,
                     title: 'Version',
-                    subtitle: '1.2.0 (build 5)',
+                    subtitle: '1.2.1 (build 6)',
                     onTap: null,
                   ),
                   _SettingsTile(
@@ -1320,7 +1332,7 @@ class _SettingsTile extends StatelessWidget {
       title: Text(title, style: AppTextStyles.bodyRegular.copyWith(color: titleColor)),
       subtitle: subtitle != null ? Text(subtitle!, style: AppTextStyles.caption) : null,
       trailing: onTap != null
-          ? const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkMuted)
+          ? Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.inkMuted)
           : null,
       onTap: onTap,
     );

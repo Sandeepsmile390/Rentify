@@ -207,7 +207,7 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
         icon: Container(
           width: 48,
           height: 48,
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: AppColors.successBg,
             shape: BoxShape.circle,
           ),

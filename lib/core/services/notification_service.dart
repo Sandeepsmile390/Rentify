@@ -1,7 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import '../config/env.dart';
 
 @pragma('vm:entry-point')
 void notificationTapBackground(NotificationResponse notificationResponse) {
@@ -180,6 +184,59 @@ class NotificationService {
     } catch (e) {
       debugPrint('Error in requestPermission: $e');
       return false;
+    }
+  }
+
+  /// Checks for new live notifications from Supabase and pops heads-up alerts.
+  /// Runs safely in background execution even when the app is closed.
+  static Future<void> checkBackgroundNotifications() async {
+    if (kIsWeb) return;
+    try {
+      await _initPlugin();
+
+      if (!Supabase.instance.isInitialized) {
+        await Supabase.initialize(
+          url: Env.supabaseUrl,
+          anonKey: Env.supabaseAnonKey,
+        );
+      }
+
+      final client = Supabase.instance.client;
+      final prefs = await SharedPreferences.getInstance();
+      final notifiedIds = prefs.getStringList('rentify_notified_bg_ids') ?? [];
+
+      // Query latest notifications
+      final res = await client
+          .from('notifications')
+          .select('id, title, message, body, metadata')
+          .order('created_at', ascending: false)
+          .limit(5);
+
+      for (final n in (res as List<dynamic>)) {
+        final id = (n['id'] as String?) ?? '';
+        if (id.isEmpty || notifiedIds.contains(id)) continue;
+
+        final title = (n['title'] as String?) ?? 'Rentify Alert';
+        final body = (n['message'] as String?) ?? (n['body'] as String?) ?? '';
+        final metadata = n['metadata'] as Map<String, dynamic>?;
+        final payload = metadata?['apk_url'] as String?;
+
+        await showSystemNotification(
+          id: id.hashCode,
+          title: title,
+          body: body,
+          payload: payload,
+        );
+
+        notifiedIds.add(id);
+      }
+
+      if (notifiedIds.length > 50) {
+        notifiedIds.removeRange(0, notifiedIds.length - 50);
+      }
+      await prefs.setStringList('rentify_notified_bg_ids', notifiedIds);
+    } catch (e) {
+      debugPrint('Background notification check error: $e');
     }
   }
 }

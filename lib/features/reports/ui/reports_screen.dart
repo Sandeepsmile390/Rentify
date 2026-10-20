@@ -10,8 +10,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/routing/routes.dart';
+import '../../../core/services/app_cache_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/theme/theme_provider.dart';
 import '../../../core/utilities/avatar_helper.dart';
 import '../../../core/utilities/currency_formatter.dart';
 
@@ -59,10 +61,16 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   String get _displayMonth => DateFormat('MMMM yyyy').format(_selectedPeriod);
 
   Future<void> _load() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+    final cached = AppCacheService.get<_ReportData>('report_$_canonicalBillingMonth');
+    if (cached != null && _data == null) {
+      _data = cached;
+      _isLoading = false;
+    } else {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
 
     try {
       final client = Supabase.instance.client;
@@ -195,21 +203,24 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       }
 
       if (!mounted) return;
+      final repData = _ReportData(
+        billingMonth: canonicalMonth,
+        displayMonth: _displayMonth,
+        totalChargedPaise: totalChargedPaise,
+        rentChargedPaise: rentChargedPaise,
+        elecChargedPaise: elecChargedPaise,
+        chargesSettledPaise: chargesSettledPaise,
+        totalCollectedInMonthPaise: totalCollectedInMonthPaise,
+        outstandingPaise: outstandingPaise,
+        paidTenantsCount: fullyPaidTenants,
+        totalActiveTenants: activeTenantsCount,
+        rows: rows,
+      );
+      AppCacheService.set('report_$_canonicalBillingMonth', repData);
+
       setState(() {
         _isLoading = false;
-        _data = _ReportData(
-          billingMonth: canonicalMonth,
-          displayMonth: _displayMonth,
-          totalChargedPaise: totalChargedPaise,
-          rentChargedPaise: rentChargedPaise,
-          elecChargedPaise: elecChargedPaise,
-          chargesSettledPaise: chargesSettledPaise,
-          totalCollectedInMonthPaise: totalCollectedInMonthPaise,
-          outstandingPaise: outstandingPaise,
-          paidTenantsCount: fullyPaidTenants,
-          totalActiveTenants: activeTenantsCount,
-          rows: rows,
-        );
+        _data = repData;
       });
     } catch (e) {
       debugPrint('Error loading monthly report: $e');
@@ -297,6 +308,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       appBar: AppBar(
         title: Text('Reports', style: AppTextStyles.h2),
         actions: [
+          const ThemeToggleButton(),
           IconButton(
             icon: const Icon(Icons.file_download_outlined),
             tooltip: 'Export CSV',
@@ -422,7 +434,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                                   padding: const EdgeInsets.symmetric(vertical: 40),
                                   child: Column(
                                     children: [
-                                      const Icon(Icons.analytics_outlined, size: 48, color: AppColors.inkMuted),
+                                      Icon(Icons.analytics_outlined, size: 48, color: AppColors.inkMuted),
                                       const SizedBox(height: 12),
                                       Text(
                                         'No report data available for $_displayMonth',
@@ -754,7 +766,7 @@ class _ReportRow extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 4),
-            const Icon(Icons.chevron_right_rounded, size: 16, color: AppColors.inkMuted),
+            Icon(Icons.chevron_right_rounded, size: 16, color: AppColors.inkMuted),
           ],
         ),
       ),

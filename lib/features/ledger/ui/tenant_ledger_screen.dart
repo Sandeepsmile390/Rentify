@@ -11,6 +11,7 @@ import '../../../core/services/update_service.dart';
 import '../../../core/services/notification_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/theme/theme_provider.dart';
 import '../../../core/utilities/avatar_helper.dart';
 import '../../../core/utilities/currency_formatter.dart';
 import '../../../core/widgets/status_chip.dart';
@@ -415,6 +416,7 @@ class _TenantHeader extends StatelessWidget {
                   ],
                 ),
               ),
+              const ThemeToggleButton(),
             ],
           ),
           const SizedBox(height: 12),
@@ -493,7 +495,7 @@ class _TenantHeader extends StatelessWidget {
     final amtFormatted = CurrencyFormatter.fromPaise(totalDuePaise);
     final amtRupees = (totalDuePaise / 100).toStringAsFixed(2);
     final upiUri = Uri.parse(
-        'upi://pay?pa=$upiId&pn=${Uri.encodeComponent(landlordName)}&am=$amtRupees&cu=INR&tn=${Uri.encodeComponent("Rent & Electricity Payment - ${data.unitId}")}');
+        'upi://pay?pa=$upiId&am=$amtRupees&cu=INR&tn=${Uri.encodeComponent("Rent & Electricity Payment - ${data.unitId}")}');
 
     showModalBottomSheet(
       context: context,
@@ -535,7 +537,7 @@ class _TenantHeader extends StatelessWidget {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.qr_code_rounded, size: 16, color: AppColors.inkMuted),
+                      Icon(Icons.qr_code_rounded, size: 16, color: AppColors.inkMuted),
                       const SizedBox(width: 6),
                       Text('UPI ID: $upiId', style: AppTextStyles.captionBold),
                       const SizedBox(width: 8),
@@ -836,7 +838,7 @@ class _LedgerRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final isCredit = entry.type == 'payment';
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),

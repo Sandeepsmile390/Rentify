@@ -491,7 +491,7 @@ class _NotificationCenterScreenState
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Icon(Icons.notifications_none_rounded,
+                              Icon(Icons.notifications_none_rounded,
                                   size: 56, color: AppColors.inkMuted),
                               const SizedBox(height: 16),
                               Text('No notifications', style: AppTextStyles.h3),

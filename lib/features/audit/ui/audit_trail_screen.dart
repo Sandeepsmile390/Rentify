@@ -243,7 +243,7 @@ class _AuditTrailScreenState extends State<AuditTrailScreen> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Icon(Icons.history_rounded, size: 48, color: AppColors.inkMuted),
+                              Icon(Icons.history_rounded, size: 48, color: AppColors.inkMuted),
                               const SizedBox(height: 12),
                               Text('No audit events yet', style: AppTextStyles.h3),
                               const SizedBox(height: 8),

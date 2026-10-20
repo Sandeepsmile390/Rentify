@@ -7,6 +7,7 @@ import '../../features/auth/providers/auth_provider.dart';
 import '../routing/routes.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
+import '../theme/theme_provider.dart';
 
 /// Desktop breakpoint — matches Figma: nav rail visible at ≥ 900 px.
 const kDesktopBreakpoint = 900.0;
@@ -106,6 +107,8 @@ class _SideNav extends StatelessWidget {
                       fontSize: 20,
                     ),
                   ),
+                  const Spacer(),
+                  const ThemeToggleButton(),
                 ],
               ),
             ),
@@ -249,7 +252,7 @@ class _MobileShell extends StatelessWidget {
     return Scaffold(
       body: child,
       bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           border: Border(
             top: BorderSide(color: AppColors.border),
           ),

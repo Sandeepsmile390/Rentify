@@ -7,10 +7,12 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/routing/routes.dart';
+import '../../../core/services/app_cache_service.dart';
 import '../../../core/services/update_service.dart';
 import '../../../core/services/whatsapp_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/theme/theme_provider.dart';
 import '../../../core/utilities/currency_formatter.dart';
 import '../../../core/widgets/status_chip.dart';
 
@@ -48,6 +50,13 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
   }
 
   Future<void> _loadDashboard() async {
+    final cached = AppCacheService.get<_DashboardData>('admin_dashboard');
+    if (cached != null && _data == null) {
+      setState(() {
+        _data = cached;
+        _isLoading = false;
+      });
+    }
     try {
       final client = Supabase.instance.client;
 
@@ -200,20 +209,23 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
       } catch (_) {}
 
       if (!mounted) return;
+      final dashData = _DashboardData(
+        totalRentDuePaise: totalRentDue,
+        totalElecDuePaise: totalElecDue,
+        collectedThisMonthPaise: collectedThisMonth,
+        activeTenants: activeCount,
+        totalTenants: tenants.length,
+        awaitingMeterReadings: awaitingMeterReadings,
+        pendingBills: pendingBills,
+        recentEvents: recentEvents,
+        tenants: tenants,
+      );
+      AppCacheService.set('admin_dashboard', dashData);
+
       setState(() {
         _isLoading = false;
         _errorMessage = null;
-        _data = _DashboardData(
-          totalRentDuePaise: totalRentDue,
-          totalElecDuePaise: totalElecDue,
-          collectedThisMonthPaise: collectedThisMonth,
-          activeTenants: activeCount,
-          totalTenants: tenants.length,
-          awaitingMeterReadings: awaitingMeterReadings,
-          pendingBills: pendingBills,
-          recentEvents: recentEvents,
-          tenants: tenants,
-        );
+        _data = dashData;
       });
     } catch (e) {
       if (!mounted) return;
@@ -240,6 +252,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
           ],
         ),
         actions: [
+          const ThemeToggleButton(),
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Refresh',
@@ -557,7 +570,7 @@ class _StatCard extends StatelessWidget {
                 ),
                 const Spacer(),
                 if (onTap != null)
-                  const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: AppColors.inkMuted),
+                  Icon(Icons.arrow_forward_ios_rounded, size: 12, color: AppColors.inkMuted),
               ],
             ),
             const SizedBox(height: 12),
@@ -778,7 +791,7 @@ class _QuickItem extends StatelessWidget {
     return ListTile(
       leading: Icon(icon, size: 20, color: AppColors.action),
       title: Text(label, style: AppTextStyles.bodyMedium),
-      trailing: const Icon(Icons.chevron_right_rounded,
+      trailing: Icon(Icons.chevron_right_rounded,
           size: 20, color: AppColors.inkMuted),
       onTap: onTap,
       minTileHeight: 52,
@@ -1061,7 +1074,7 @@ class _TenantListTile extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(width: 8),
-                  const Icon(Icons.chevron_right_rounded,
+                  Icon(Icons.chevron_right_rounded,
                       size: 18, color: AppColors.inkMuted),
                 ],
               ),
@@ -1347,9 +1360,9 @@ class _ElectricityDuesBreakdownSheetState
 
     return Container(
       height: sheetHeight,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.canvas,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(
         children: [
@@ -1471,11 +1484,11 @@ class _ElectricityDuesBreakdownSheetState
                   contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: AppColors.border),
+                    borderSide: BorderSide(color: AppColors.border),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: AppColors.border),
+                    borderSide: BorderSide(color: AppColors.border),
                   ),
                 ),
               ),
@@ -1512,7 +1525,7 @@ class _ElectricityDuesBreakdownSheetState
                                 children: [
                                   Container(
                                     padding: const EdgeInsets.all(16),
-                                    decoration: const BoxDecoration(
+                                    decoration: BoxDecoration(
                                       color: AppColors.successBg,
                                       shape: BoxShape.circle,
                                     ),
@@ -1678,7 +1691,7 @@ class _TenantElecCard extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       child: Row(
                         children: [
-                          const Icon(Icons.calendar_month_outlined, size: 16, color: AppColors.inkMuted),
+                          Icon(Icons.calendar_month_outlined, size: 16, color: AppColors.inkMuted),
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(

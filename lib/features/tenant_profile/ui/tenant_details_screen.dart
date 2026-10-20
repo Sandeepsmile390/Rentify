@@ -3,13 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
-
 import '../../../core/routing/routes.dart';
 import '../../../core/services/biometric_service.dart';
 import '../../../core/services/update_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/theme/theme_provider.dart';
 import '../../../core/utilities/currency_formatter.dart';
 import '../../../core/widgets/status_chip.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -25,7 +24,6 @@ class TenantDetailsScreen extends ConsumerStatefulWidget {
 class _TenantDetailsScreenState extends ConsumerState<TenantDetailsScreen> {
   bool _isLoading = true;
   Map<String, dynamic>? _tenancyData;
-  Map<String, dynamic>? _adminProfile;
   int _advanceBalancePaise = 0;
   int _rentRatePaise = 0;
   int _electricityRatePaise = 900;
@@ -88,7 +86,6 @@ class _TenantDetailsScreenState extends ConsumerState<TenantDetailsScreen> {
       String elecMode = 'metered';
       double initReading = 0.0;
       int fixedAmt = 0;
-      Map<String, dynamic>? admin;
 
       if (tenancy != null) {
         final tId = tenancy['id'] as String;
@@ -97,11 +94,23 @@ class _TenantDetailsScreenState extends ConsumerState<TenantDetailsScreen> {
         try {
           final advRes = await client
               .from('tenant_advances')
-              .select('current_advance_paise')
+              .select('id')
               .eq('tenancy_id', tId)
               .maybeSingle();
           if (advRes != null) {
-            advance = (advRes['current_advance_paise'] as num?)?.toInt() ?? 0;
+            final txnsRes = await client
+                .from('advance_transactions')
+                .select('amount_paise, txn_type')
+                .eq('advance_id', advRes['id']);
+            for (final t in (txnsRes as List<dynamic>)) {
+              final amt = (t['amount_paise'] as num?)?.toInt() ?? 0;
+              final type = t['txn_type'] as String?;
+              if (type == 'refunded' || type == 'applied') {
+                advance -= amt.abs();
+              } else {
+                advance += amt;
+              }
+            }
           }
         } catch (_) {}
 
@@ -135,17 +144,6 @@ class _TenantDetailsScreenState extends ConsumerState<TenantDetailsScreen> {
           }
         } catch (_) {}
 
-        // 3. Fetch landlord/admin profile
-        try {
-          final adminRes = await client
-              .from('profiles')
-              .select('full_name, mobile, email')
-              .eq('role', 'admin')
-              .limit(1);
-          if (adminRes.isNotEmpty) {
-            admin = Map<String, dynamic>.from(adminRes.first as Map);
-          }
-        } catch (_) {}
       }
 
       if (!mounted) return;
@@ -158,7 +156,6 @@ class _TenantDetailsScreenState extends ConsumerState<TenantDetailsScreen> {
         _electricityMode = elecMode;
         _initialMeterReading = initReading;
         _fixedElecAmountPaise = fixedAmt;
-        _adminProfile = admin;
         _isBiometricSupported = supported;
         _isBiometricEnabled = enabled;
       });
@@ -199,24 +196,14 @@ class _TenantDetailsScreenState extends ConsumerState<TenantDetailsScreen> {
     }
   }
 
-  Future<void> _contactLandlord(String? phone) async {
-    if (phone == null || phone.isEmpty) return;
-    final digits = phone.replaceAll(RegExp(r'\D'), '');
-    final cleanPhone = digits.length >= 10 ? '91${digits.substring(digits.length - 10)}' : digits;
-    final uri = Uri.parse('https://wa.me/$cleanPhone');
-    try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      }
-    } catch (_) {}
-  }
+
 
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(
+      return Scaffold(
         backgroundColor: AppColors.canvas,
-        body: Center(child: CircularProgressIndicator()),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -239,6 +226,7 @@ class _TenantDetailsScreenState extends ConsumerState<TenantDetailsScreen> {
       appBar: AppBar(
         title: Text('My Tenancy Details', style: AppTextStyles.h2),
         actions: [
+          const ThemeToggleButton(),
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Refresh',
@@ -382,34 +370,6 @@ class _TenantDetailsScreenState extends ConsumerState<TenantDetailsScreen> {
               const SizedBox(height: 16),
             ],
 
-            // ── Landlord Contact Card ───────────────────────────────
-            if (_adminProfile != null) ...[
-              _SectionCard(
-                title: 'Property Manager / Landlord',
-                icon: Icons.admin_panel_settings_outlined,
-                children: [
-                  _DetailRow(
-                    label: 'Landlord Name',
-                    value: (_adminProfile!['full_name'] as String?) ?? 'Landlord Admin',
-                  ),
-                  if (_adminProfile!['mobile'] != null && _adminProfile!['mobile'].toString().isNotEmpty)
-                    _DetailRow(
-                      label: 'Contact Number',
-                      value: _adminProfile!['mobile'].toString(),
-                    ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _contactLandlord(_adminProfile!['mobile']?.toString()),
-                      icon: const Icon(Icons.chat_bubble_outline_rounded, color: AppColors.success),
-                      label: const Text('Message Landlord on WhatsApp'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-            ],
 
             // ── Security & App Settings ─────────────────────────────
             _SectionCard(
