@@ -236,7 +236,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   const _SettingsTile(
                     icon: Icons.info_outline_rounded,
                     title: 'Version',
-                    subtitle: '1.1.0 (build 2)',
+                    subtitle: '1.2.0 (build 5)',
                     onTap: null,
                   ),
                   _SettingsTile(
