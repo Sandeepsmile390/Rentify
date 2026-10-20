@@ -113,13 +113,19 @@ class NotificationService {
               payload.contains('drive.google.com') ||
               title.toLowerCase().contains('update'));
 
+      // Ensure permission is granted on Android 13+
+      await initializeAndPrompt();
+
       final androidDetails = AndroidNotificationDetails(
-        'rentify_alerts_channel',
-        'Rentify Alerts & Notices',
-        channelDescription: 'Important updates, billing alerts, and rent receipts',
-        importance: Importance.high,
-        priority: Priority.high,
+        'rentify_live_alerts_v2',
+        'Rentify Live Alerts & Notices',
+        channelDescription: 'Heads-up popups, updates, dues reminders, and billing receipts',
+        importance: Importance.max,
+        priority: Priority.max,
         showWhen: true,
+        playSound: true,
+        enableVibration: true,
+        ticker: 'Rentify Alert',
         actions: isUpdate
             ? <AndroidNotificationAction>[
                 const AndroidNotificationAction(
@@ -131,7 +137,11 @@ class NotificationService {
               ]
             : null,
       );
-      const darwinDetails = DarwinNotificationDetails();
+      const darwinDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
       final details = NotificationDetails(
         android: androidDetails,
         iOS: darwinDetails,

@@ -8,9 +8,12 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'package:file_picker/file_picker.dart';
 import '../../../core/routing/routes.dart';
 import '../../../core/services/biometric_service.dart';
 import '../../../core/services/update_service.dart';
+import '../../../core/services/notification_service.dart';
+import '../../../core/services/app_cache_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -190,17 +193,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     enabled: true,
                     onChanged: (v) => setState(() => _notificationsEnabled = v),
                   ),
+                  _SettingsTile(
+                    icon: Icons.notification_important_outlined,
+                    title: 'Test live popup notification',
+                    subtitle: 'Trigger a test heads-up banner & status bar alert',
+                    onTap: () => _testNotification(),
+                  ),
                 ]),
 
                 // ── Data section ───────────────────────────────────
                 _SettingsSection('Data & Records', [
-                  if (isAdmin)
+                  if (isAdmin) ...[
                     _SettingsTile(
-                      icon: Icons.download_outlined,
-                      title: 'Export ledger',
+                      icon: Icons.file_download_outlined,
+                      title: 'Export database (JSON backup)',
+                      subtitle: 'Extract all database tables to save on phone storage or clipboard',
+                      onTap: () => _showExportDatabaseDialog(),
+                    ),
+                    _SettingsTile(
+                      icon: Icons.file_upload_outlined,
+                      title: 'Import database (Restore data)',
+                      subtitle: 'Insert or restore data directly into Supabase database',
+                      onTap: () => _showImportDatabaseDialog(),
+                    ),
+                    _SettingsTile(
+                      icon: Icons.table_chart_outlined,
+                      title: 'Export ledger (CSV)',
                       subtitle: 'Download complete property transaction ledger as CSV',
                       onTap: () => _showExportDialog(),
                     ),
+                  ],
                   _SettingsTile(
                     icon: Icons.backup_outlined,
                     title: 'Backup & cloud status',
@@ -548,6 +570,379 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                     )
                   : const Text('Update Password'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _testNotification() async {
+    try {
+      await NotificationService.initializeAndPrompt();
+      await NotificationService.showSystemNotification(
+        id: 9999,
+        title: '🔔 Rentify Live Popup Alert',
+        body: 'Push notifications and status bar popups are working live on your device!',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Live heads-up notification sent to status bar!'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Notification error: $e'), backgroundColor: AppColors.error),
+        );
+      }
+    }
+  }
+
+  Future<void> _showExportDatabaseDialog() async {
+    final client = Supabase.instance.client;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Extracting full database snapshot...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final tenancies = await client.from('tenancies').select().order('created_at');
+      final advances = await client.from('tenant_advances').select();
+      final advanceTxns = await client.from('advance_transactions').select().order('created_at');
+      final elecConfigs = await client.from('electricity_config').select();
+      final meterReadings = await client.from('meter_readings').select().order('created_at');
+      final charges = await client.from('charges').select().order('created_at');
+      final payments = await client.from('payments').select().order('created_at');
+      final allocations = await client.from('payment_allocations').select().order('created_at');
+
+      final exportData = {
+        'app': 'Rentify',
+        'export_version': '1.0',
+        'exported_at': DateTime.now().toIso8601String(),
+        'counts': {
+          'tenancies': (tenancies as List).length,
+          'tenant_advances': (advances as List).length,
+          'advance_transactions': (advanceTxns as List).length,
+          'electricity_config': (elecConfigs as List).length,
+          'meter_readings': (meterReadings as List).length,
+          'charges': (charges as List).length,
+          'payments': (payments as List).length,
+          'payment_allocations': (allocations as List).length,
+        },
+        'tables': {
+          'tenancies': tenancies,
+          'tenant_advances': advances,
+          'advance_transactions': advanceTxns,
+          'electricity_config': elecConfigs,
+          'meter_readings': meterReadings,
+          'charges': charges,
+          'payments': payments,
+          'payment_allocations': allocations,
+        },
+      };
+
+      final jsonStr = const JsonEncoder.withIndent('  ').convert(exportData);
+
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop(); // dismiss loading
+
+      showDialog(
+        context: context,
+        builder: (dCtx) => AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.file_download_done_rounded, color: AppColors.success),
+              const SizedBox(width: 8),
+              Text('Database Export Ready', style: AppTextStyles.h2),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Full database snapshot extracted successfully.\n\n'
+                  '• Tenancies: ${(tenancies as List).length}\n'
+                  '• Advances: ${(advances as List).length} (${(advanceTxns as List).length} txns)\n'
+                  '• Electricity configs: ${(elecConfigs as List).length}\n'
+                  '• Meter readings: ${(meterReadings as List).length}\n'
+                  '• Charges: ${(charges as List).length}\n'
+                  '• Payments: ${(payments as List).length}\n'
+                  '• Payment allocations: ${(allocations as List).length}',
+                  style: AppTextStyles.bodyRegular,
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Text(
+                    'JSON size: ${(jsonStr.length / 1024).toStringAsFixed(1)} KB.\n'
+                    'You can copy the raw JSON or save it on your phone for full safekeeping or restoring anytime.',
+                    style: AppTextStyles.caption,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dCtx).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: jsonStr));
+                Navigator.of(dCtx).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Database JSON copied to clipboard! Save to notes or backup file.'),
+                    backgroundColor: AppColors.success,
+                  ),
+                );
+              },
+              icon: const Icon(Icons.copy_rounded),
+              label: const Text('Copy JSON to Phone'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Database export failed: $e'), backgroundColor: AppColors.error),
+      );
+    }
+  }
+
+  void _showImportDatabaseDialog() {
+    final textCtrl = TextEditingController();
+    bool isImporting = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dCtx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.file_upload_outlined, color: AppColors.action),
+              const SizedBox(width: 8),
+              Text('Import Database', style: AppTextStyles.h2),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Restore database records from a previously exported Rentify JSON backup file or paste the JSON text.',
+                  style: AppTextStyles.bodyRegular,
+                ),
+                const SizedBox(height: 14),
+                OutlinedButton.icon(
+                  onPressed: isImporting
+                      ? null
+                      : () async {
+                          try {
+                            final result = await FilePicker.platform.pickFiles(
+                              type: FileType.custom,
+                              allowedExtensions: ['json', 'txt'],
+                              withData: true,
+                            );
+                            if (result != null && result.files.isNotEmpty) {
+                              final bytes = result.files.first.bytes;
+                              if (bytes != null) {
+                                final text = utf8.decode(bytes);
+                                textCtrl.text = text;
+                              }
+                            }
+                          } catch (e) {
+                            debugPrint('Error picking file: $e');
+                          }
+                        },
+                  icon: const Icon(Icons.folder_open_rounded),
+                  label: const Text('Pick JSON Backup File from Phone'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: textCtrl,
+                  maxLines: 6,
+                  decoration: const InputDecoration(
+                    labelText: 'Or Paste JSON Backup String',
+                    hintText: '{\n  "app": "Rentify",\n  "tables": { ... }\n}',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                if (isImporting) ...[
+                  const SizedBox(height: 16),
+                  const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(width: 12),
+                      Text('Restoring records into database...'),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isImporting ? null : () => Navigator.of(dCtx).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: isImporting
+                  ? null
+                  : () async {
+                      final raw = textCtrl.text.trim();
+                      if (raw.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Please select or paste JSON data')),
+                        );
+                        return;
+                      }
+
+                      Map<String, dynamic> data;
+                      try {
+                        data = jsonDecode(raw) as Map<String, dynamic>;
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Invalid JSON format: $e'), backgroundColor: AppColors.error),
+                        );
+                        return;
+                      }
+
+                      final tables = data['tables'] as Map<String, dynamic>?;
+                      if (tables == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Missing "tables" section in JSON backup'), backgroundColor: AppColors.error),
+                        );
+                        return;
+                      }
+
+                      setDialogState(() => isImporting = true);
+
+                      try {
+                        final client = Supabase.instance.client;
+
+                        // 1. Tenancies
+                        if (tables['tenancies'] != null) {
+                          final rows = (tables['tenancies'] as List).cast<Map<String, dynamic>>();
+                          if (rows.isNotEmpty) {
+                            await client.from('tenancies').upsert(rows);
+                          }
+                        }
+
+                        // 2. Tenant Advances
+                        if (tables['tenant_advances'] != null) {
+                          final rows = (tables['tenant_advances'] as List).cast<Map<String, dynamic>>();
+                          if (rows.isNotEmpty) {
+                            await client.from('tenant_advances').upsert(rows);
+                          }
+                        }
+
+                        // 3. Electricity Config
+                        if (tables['electricity_config'] != null) {
+                          final rows = (tables['electricity_config'] as List).cast<Map<String, dynamic>>();
+                          if (rows.isNotEmpty) {
+                            await client.from('electricity_config').upsert(rows);
+                          }
+                        }
+
+                        // 4. Meter Readings
+                        if (tables['meter_readings'] != null) {
+                          final rows = (tables['meter_readings'] as List).cast<Map<String, dynamic>>();
+                          if (rows.isNotEmpty) {
+                            await client.from('meter_readings').upsert(rows);
+                          }
+                        }
+
+                        // 5. Charges
+                        if (tables['charges'] != null) {
+                          final rows = (tables['charges'] as List).cast<Map<String, dynamic>>();
+                          if (rows.isNotEmpty) {
+                            await client.from('charges').upsert(rows);
+                          }
+                        }
+
+                        // 6. Payments
+                        if (tables['payments'] != null) {
+                          final rows = (tables['payments'] as List).cast<Map<String, dynamic>>();
+                          if (rows.isNotEmpty) {
+                            await client.from('payments').upsert(rows);
+                          }
+                        }
+
+                        // 7. Payment Allocations
+                        if (tables['payment_allocations'] != null) {
+                          final rows = (tables['payment_allocations'] as List).cast<Map<String, dynamic>>();
+                          if (rows.isNotEmpty) {
+                            await client.from('payment_allocations').upsert(rows);
+                          }
+                        }
+
+                        // 8. Advance Transactions
+                        if (tables['advance_transactions'] != null) {
+                          final rows = (tables['advance_transactions'] as List).cast<Map<String, dynamic>>();
+                          if (rows.isNotEmpty) {
+                            await client.from('advance_transactions').upsert(rows);
+                          }
+                        }
+
+                        // Clear cache so all app views refresh
+                        AppCacheService.clearAll();
+
+                        if (dCtx.mounted) {
+                          Navigator.of(dCtx).pop();
+                        }
+
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Database import restored successfully!'),
+                              backgroundColor: AppColors.success,
+                            ),
+                          );
+                        }
+                      } catch (e) {
+                        setDialogState(() => isImporting = false);
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Database import error: $e'), backgroundColor: AppColors.error),
+                          );
+                        }
+                      }
+                    },
+              icon: const Icon(Icons.cloud_upload_rounded),
+              label: const Text('Start Import to Database'),
             ),
           ],
         ),

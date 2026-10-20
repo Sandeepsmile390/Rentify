@@ -4,8 +4,10 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/routing/routes.dart';
+import '../../../core/services/app_cache_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/utilities/avatar_helper.dart';
 import '../../../core/utilities/currency_formatter.dart';
 import '../../../core/widgets/status_chip.dart';
 import '../services/tenancy_service.dart';
@@ -40,7 +42,17 @@ class _TenantDirectoryScreenState
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool forceRefresh = false}) async {
+    if (!forceRefresh) {
+      final cached = AppCacheService.get<List<_TenantItem>>('tenant_directory');
+      if (cached != null && cached.isNotEmpty) {
+        setState(() {
+          _isLoading = false;
+          _tenants = cached;
+        });
+      }
+    }
+
     try {
       final client = Supabase.instance.client;
       final res = await client
@@ -103,6 +115,8 @@ class _TenantDirectoryScreenState
         );
       }).toList();
 
+      AppCacheService.set('tenant_directory', list);
+
       if (!mounted) return;
       setState(() {
         _isLoading = false;
@@ -112,7 +126,7 @@ class _TenantDirectoryScreenState
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _tenants = [];
+        if (_tenants.isEmpty) _tenants = [];
       });
     }
   }
@@ -463,12 +477,17 @@ class _TableRow extends StatelessWidget {
           children: [
             Expanded(
               flex: 3,
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        tenant.name,
+              child: Row(
+                children: [
+                  AvatarHelper.buildAvatar(name: tenant.name, radius: 16, fontSize: 13),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              tenant.name,
                         style: AppTextStyles.bodyMedium,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -494,9 +513,12 @@ class _TableRow extends StatelessWidget {
                     ],
                   ],
                 ),
-                Text(tenant.type, style: AppTextStyles.caption),
-              ]),
+                    Text(tenant.type, style: AppTextStyles.caption),
+                  ]),
+                ),
+              ],
             ),
+          ),
             Expanded(flex: 2, child: Text(tenant.unit, style: AppTextStyles.bodyRegular)),
             Expanded(flex: 2, child: Text(tenant.mobile, style: AppTextStyles.bodyRegular)),
             Expanded(
@@ -606,6 +628,7 @@ class _TenantList extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView.separated(
       physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 96),
       itemCount: tenants.length,
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (ctx, i) => _MobileTenantTile(tenant: tenants[i], onRefresh: onRefresh),
@@ -623,24 +646,9 @@ class _MobileTenantTile extends StatelessWidget {
     final hasDues = tenant.totalDuePaise > 0;
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      leading: CircleAvatar(
+      leading: AvatarHelper.buildAvatar(
+        name: tenant.name,
         radius: 20,
-        backgroundColor: !tenant.isActive
-            ? AppColors.surfaceVariant
-            : hasDues
-                ? AppColors.errorBg
-                : AppColors.actionBg,
-        child: Text(
-          tenant.name.isNotEmpty ? tenant.name[0].toUpperCase() : '?',
-          style: TextStyle(
-            color: !tenant.isActive
-                ? AppColors.inkMuted
-                : hasDues
-                    ? AppColors.error
-                    : AppColors.action,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
       ),
       title: Row(
         children: [

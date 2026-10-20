@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/routing/routes.dart';
+import '../../../core/services/app_cache_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/validators.dart';
@@ -25,7 +26,7 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
   // Form field controllers
   final _nameCtrl = TextEditingController();
   final _mobileCtrl = TextEditingController();
-  final _emailCtrl = TextEditingController();
+  final _advanceCtrl = TextEditingController();
   final _unitCtrl = TextEditingController();
   final _rentCtrl = TextEditingController();
   final _startDateCtrl = TextEditingController();
@@ -35,7 +36,6 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
 
   String _tenantType = 'room';
   String _elecMode = 'meter';
-  bool _createLogin = false;
   bool _isSubmitting = false;
   String? _errorMessage;
   DateTime _startDate = DateTime.now();
@@ -48,7 +48,7 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
 
   @override
   void dispose() {
-    _nameCtrl.dispose(); _mobileCtrl.dispose(); _emailCtrl.dispose();
+    _nameCtrl.dispose(); _mobileCtrl.dispose(); _advanceCtrl.dispose();
     _unitCtrl.dispose(); _rentCtrl.dispose(); _startDateCtrl.dispose();
     _fixedElecCtrl.dispose(); _initialReadingCtrl.dispose(); _notesCtrl.dispose();
     super.dispose();
@@ -75,11 +75,6 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
 
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-
-    if (_createLogin && _emailCtrl.text.trim().isEmpty) {
-      setState(() => _errorMessage = 'Email is required when creating a login account.');
-      return;
-    }
 
     setState(() { _isSubmitting = true; _errorMessage = null; });
 
@@ -160,10 +155,24 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
         });
       }
 
-      // 3. Initialize tenant_advances record
-      await client.from('tenant_advances').insert({
+      // 3. Initialize tenant_advances & record initial deposit if provided
+      final advanceVal = double.tryParse(_advanceCtrl.text.trim()) ?? 0;
+      final advanceRes = await client.from('tenant_advances').insert({
         'tenancy_id': tenancyId,
-      });
+      }).select().single();
+
+      final advanceId = advanceRes['id'] as String;
+      if (advanceVal > 0) {
+        final advancePaise = (advanceVal * 100).round();
+        await client.from('advance_transactions').insert({
+          'advance_id': advanceId,
+          'txn_type': 'received',
+          'amount_paise': advancePaise,
+          'txn_date': _startDate.toIso8601String().substring(0, 10),
+          'notes': 'Initial advance deposit received at tenancy creation',
+          if (userId != null) 'created_by': userId,
+        });
+      }
 
       // 4. Auto-provision tenant auth account (User ID = mobile, Password = mobile)
       final cleanMobile = _mobileCtrl.text.replaceAll(RegExp(r'\D'), '');
@@ -177,6 +186,8 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
           debugPrint('Notice: Auto-provisioning tenant login: $e');
         }
       }
+
+      AppCacheService.clearAll();
 
       if (!mounted) return;
       _showSuccessDialog();
@@ -230,16 +241,15 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
                 _formKey.currentState?.reset();
                 _nameCtrl.clear();
                 _mobileCtrl.clear();
-                _emailCtrl.clear();
                 _unitCtrl.clear();
                 _rentCtrl.clear();
+                _advanceCtrl.clear();
                 _notesCtrl.clear();
                 setState(() {
                   _startDate = DateTime.now();
                   _startDateCtrl.text = _formatDate(_startDate);
                   _tenantType = 'room';
                   _elecMode = 'meter';
-                  _createLogin = false;
                 });
               }
             },
@@ -268,7 +278,7 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
           padding: const EdgeInsets.all(16),
           children: [
             // ── Tenant info section ─────────────────────────
-            _SectionHeader('Tenant information'),
+            const _SectionHeader('Tenant information'),
             const SizedBox(height: 12),
 
             AppTextField(
@@ -291,79 +301,11 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
               prefixIcon: Icons.phone_outlined,
               validator: Validators.mobile,
             ),
-            const SizedBox(height: 14),
-
-            // Toggle: create login account
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Create login account', style: AppTextStyles.bodyMedium),
-                            Text(
-                              'Tenant can sign in and view their account',
-                              style: AppTextStyles.caption,
-                            ),
-                          ],
-                        ),
-                      ),
-                      Switch(
-                        value: _createLogin,
-                        onChanged: (v) => setState(() => _createLogin = v),
-                      ),
-                    ],
-                  ),
-                  if (_createLogin) ...[
-                    const SizedBox(height: 12),
-                    AppTextField(
-                      label: 'Email address *',
-                      hint: 'tenant@example.com',
-                      controller: _emailCtrl,
-                      keyboardType: TextInputType.emailAddress,
-                      textInputAction: TextInputAction.next,
-                      prefixIcon: Icons.email_outlined,
-                      validator: _createLogin ? Validators.email : null,
-                    ),
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: AppColors.actionBg,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: AppColors.actionBorder),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.action),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'A password reset link will be emailed to the tenant.',
-                              style: AppTextStyles.caption.copyWith(color: AppColors.action),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
 
             const SizedBox(height: 20),
 
             // ── Unit section ──────────────────────────────────
-            _SectionHeader('Unit details'),
+            const _SectionHeader('Unit details'),
             const SizedBox(height: 12),
 
             AppTextField(
@@ -408,8 +350,8 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
 
             const SizedBox(height: 20),
 
-            // ── Rent section ──────────────────────────────────
-            _SectionHeader('Rent'),
+            // ── Rent & Advance section ──────────────────────────
+            const _SectionHeader('Rent & Advance Deposit'),
             const SizedBox(height: 12),
 
             AppTextField(
@@ -422,11 +364,22 @@ class _CreateTenantScreenState extends ConsumerState<CreateTenantScreen> {
               validator: Validators.positiveAmount,
               inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.,]'))],
             ),
+            const SizedBox(height: 14),
+
+            AppTextField(
+              label: 'Advance / Security Deposit (₹)',
+              hint: 'e.g. 3000 (leave 0 or blank if none)',
+              controller: _advanceCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              textInputAction: TextInputAction.next,
+              prefixIcon: Icons.account_balance_wallet_outlined,
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.,]'))],
+            ),
 
             const SizedBox(height: 20),
 
             // ── Electricity section ───────────────────────────
-            _SectionHeader('Electricity'),
+            const _SectionHeader('Electricity'),
             const SizedBox(height: 12),
 
             Text('Billing mode *', style: AppTextStyles.inputLabel),

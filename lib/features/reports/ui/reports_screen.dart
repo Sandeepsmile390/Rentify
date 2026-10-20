@@ -4,12 +4,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/routing/routes.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/utilities/avatar_helper.dart';
 import '../../../core/utilities/currency_formatter.dart';
 
 /// Reports screen — month-scoped summary, per-tenant breakdown, and real CSV export
@@ -31,11 +34,20 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   void initState() {
     super.initState();
     final now = DateTime.now();
-    _selectedPeriod = DateTime(now.year, now.month, 1);
+    // Compute last day of the current calendar month
+    final lastDayOfCurrentMonth = DateTime(now.year, now.month + 1, 0).day;
+    final isCurrentMonthEnded = now.day >= lastDayOfCurrentMonth;
 
-    // Generate dynamic list of past 24 months down to current month
+    // Only show current month once the 31st (or last day) completes; otherwise latest is previous month
+    final latestReportMonth = isCurrentMonthEnded
+        ? DateTime(now.year, now.month, 1)
+        : DateTime(now.year, now.month - 1, 1);
+
+    _selectedPeriod = latestReportMonth;
+
+    // Generate dynamic list of past 24 completed months
     _availableMonths = List.generate(24, (i) {
-      return DateTime(now.year, now.month - i, 1);
+      return DateTime(latestReportMonth.year, latestReportMonth.month - i, 1);
     });
 
     _load();
@@ -168,6 +180,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         // Include in table if tenant has charges, collections, or is active
         if (tCharged > 0 || tCollectedThisMonth > 0 || tIsActive) {
           rows.add(_ReportRowData(
+            tenancyId: tId,
             name: tName,
             unit: tUnit,
             rentChargedPaise: tRentCharged,
@@ -676,60 +689,74 @@ class _ReportRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(row.name, style: AppTextStyles.bodyMedium),
-                Row(
-                  children: [
-                    Text(row.unit, style: AppTextStyles.caption),
-                    const SizedBox(width: 6),
-                    _StatusBadge(status: row.status),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              CurrencyFormatter.fromPaise(row.totalChargedPaise),
-              style: AppTextStyles.currencySmall,
-              textAlign: TextAlign.right,
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              CurrencyFormatter.fromPaise(row.settledPaise),
-              style: AppTextStyles.currencySmall.copyWith(color: AppColors.success),
-              textAlign: TextAlign.right,
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              CurrencyFormatter.fromPaise(row.outstandingPaise),
-              style: AppTextStyles.currencySmall.copyWith(
-                color: row.outstandingPaise > 0 ? AppColors.amountDue : AppColors.success,
-                fontWeight: FontWeight.w700,
+    return InkWell(
+      onTap: () => context.push('${Routes.tenantProfile}/${row.tenancyId}'),
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 3,
+              child: Row(
+                children: [
+                  AvatarHelper.buildAvatar(name: row.name, radius: 14, fontSize: 11),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(row.name, style: AppTextStyles.bodyMedium, overflow: TextOverflow.ellipsis),
+                        Row(
+                          children: [
+                            Text(row.unit, style: AppTextStyles.caption),
+                            const SizedBox(width: 6),
+                            _StatusBadge(status: row.status),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              textAlign: TextAlign.right,
             ),
-          ),
-        ],
+            Expanded(
+              flex: 2,
+              child: Text(
+                CurrencyFormatter.fromPaise(row.totalChargedPaise),
+                style: AppTextStyles.currencySmall,
+                textAlign: TextAlign.right,
+              ),
+            ),
+            Expanded(
+              flex: 2,
+              child: Text(
+                CurrencyFormatter.fromPaise(row.settledPaise),
+                style: AppTextStyles.currencySmall.copyWith(color: AppColors.success),
+                textAlign: TextAlign.right,
+              ),
+            ),
+            Expanded(
+              flex: 2,
+              child: Text(
+                CurrencyFormatter.fromPaise(row.outstandingPaise),
+                style: AppTextStyles.currencySmall.copyWith(
+                  color: row.outstandingPaise > 0 ? AppColors.amountDue : AppColors.success,
+                  fontWeight: FontWeight.w700,
+                ),
+                textAlign: TextAlign.right,
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right_rounded, size: 16, color: AppColors.inkMuted),
+          ],
+        ),
       ),
     );
   }
@@ -801,7 +828,7 @@ class _ReportData {
 }
 
 class _ReportRowData {
-  final String name, unit;
+  final String tenancyId, name, unit;
   final int rentChargedPaise;
   final int elecChargedPaise;
   final int totalChargedPaise;
@@ -811,6 +838,7 @@ class _ReportRowData {
   final String status;
 
   const _ReportRowData({
+    required this.tenancyId,
     required this.name,
     required this.unit,
     required this.rentChargedPaise,

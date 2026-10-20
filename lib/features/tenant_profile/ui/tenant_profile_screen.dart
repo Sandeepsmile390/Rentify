@@ -10,6 +10,7 @@ import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utilities/currency_formatter.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/status_chip.dart';
+import '../../../core/utilities/avatar_helper.dart';
 import '../../tenants/services/tenancy_service.dart';
 import 'package:intl/intl.dart';
 
@@ -142,22 +143,6 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
         fixedElecAmountPaise = (elecRes['fixed_amount_paise'] as num?)?.toInt() ?? 0;
       }
 
-      // If fixed electricity mode, automatically ensure current month's fixed bill is generated on billing date
-      if (elecMode == 'fixed' && fixedElecAmountPaise > 0 && isActive) {
-        final canonicalMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}-01';
-        try {
-          await client.from('charges').upsert({
-            'tenancy_id': widget.tenancyId,
-            'charge_type': 'electricity',
-            'billing_month': canonicalMonth,
-            'amount_paise': fixedElecAmountPaise,
-            'status': 'pending',
-          }, onConflict: 'tenancy_id,charge_type,billing_month');
-        } catch (e) {
-          debugPrint('Auto fixed electricity charge notice: $e');
-        }
-      }
-
       // 4. Meter readings history (sorted by billing_month & creation time)
       final List<_MeterReadingItem> meterReadingItems = [];
       double lastMeter = initialMeterReading ?? 0.0;
@@ -198,6 +183,58 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
           .eq('tenancy_id', widget.tenancyId)
           .order('billing_month', ascending: false);
 
+      // Fetch charge notes and payment chunks
+      final Map<String, String?> chargeNotesMap = {};
+      final Map<String, List<_ChargeChunk>> chunksByChargeId = {};
+      try {
+        final chargesRes = await client
+            .from('charges')
+            .select('id, notes')
+            .eq('tenancy_id', widget.tenancyId);
+        for (final c in (chargesRes as List<dynamic>)) {
+          final cid = c['id'] as String?;
+          if (cid != null) {
+            chargeNotesMap[cid] = c['notes'] as String?;
+          }
+        }
+
+        final chargeIds = (allocRes as List<dynamic>)
+            .map((r) => r['charge_id'] as String?)
+            .where((id) => id != null && id.isNotEmpty)
+            .cast<String>()
+            .toList();
+
+        if (chargeIds.isNotEmpty) {
+          final paRes = await client
+              .from('payment_allocations')
+              .select('charge_id, amount_paise, is_reversed, payments(id, payment_date, method, notes, reference)')
+              .inFilter('charge_id', chargeIds)
+              .eq('is_reversed', false);
+
+          for (final row in (paRes as List<dynamic>)) {
+            final cId = row['charge_id'] as String?;
+            if (cId == null) continue;
+            final pMap = row['payments'] as Map<String, dynamic>?;
+            final chunk = _ChargeChunk(
+              paymentId: pMap?['id'] as String? ?? '',
+              amountPaise: (row['amount_paise'] as num?)?.toInt() ?? 0,
+              paymentDate: (pMap?['payment_date'] as String?) ?? '',
+              method: (pMap?['method'] as String?) ?? 'cash',
+              notes: pMap?['notes'] as String?,
+              reference: pMap?['reference'] as String?,
+            );
+            chunksByChargeId.putIfAbsent(cId, () => []).add(chunk);
+          }
+
+          // Sort chunks by date
+          for (final list in chunksByChargeId.values) {
+            list.sort((a, b) => a.paymentDate.compareTo(b.paymentDate));
+          }
+        }
+      } catch (e) {
+        debugPrint('Notice loading charge allocations details: $e');
+      }
+
       int rentDuePaise = 0;
       int elecDuePaise = 0;
       int currentElecPaise = 0;
@@ -212,6 +249,7 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
         final out = (r['outstanding_paise'] as num?)?.toInt() ?? 0;
         final alloc = (r['allocated_paise'] as num?)?.toInt() ?? 0;
         final month = (r['billing_month'] as String?) ?? '';
+        final cId = (r['charge_id'] as String?) ?? '';
         final isCurrentMonth = month.startsWith(currentMonthPrefix);
 
         if (out > 0) {
@@ -238,11 +276,16 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen>
         }
 
         chargeItems.add(_ChargeItem(
+          id: cId,
           label: cType == 'electricity' ? 'Electricity' : 'Rent',
           month: month,
           amountPaise: amt,
+          allocatedPaise: alloc,
+          outstandingPaise: out,
           type: cType,
           status: itemStatus,
+          note: chargeNotesMap[cId],
+          chunks: chunksByChargeId[cId] ?? const [],
         ));
       }
 
@@ -1032,17 +1075,10 @@ class _ProfileAppBar extends StatelessWidget {
           child: Row(
             children: [
               // Avatar
-              CircleAvatar(
-                radius: 26,
-                backgroundColor: Colors.white24,
-                child: Text(
-                  data.name.isNotEmpty ? data.name[0].toUpperCase() : '?',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+              AvatarHelper.buildAvatar(
+                name: data.name,
+                size: 52,
+                fontSize: 22,
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -1120,84 +1156,90 @@ class _ProfileAppBar extends StatelessWidget {
   void _showActionsSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (sheetCtx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.edit_note_rounded, color: AppColors.action),
-              title: const Text('Edit tenant details'),
-              subtitle: const Text('Update name, phone, status, start date, rent'),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                onEdit();
-              },
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 8),
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.border,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  leading: const Icon(Icons.edit_note_rounded, color: AppColors.action),
+                  title: const Text('Edit tenant details'),
+                  subtitle: const Text('Update name, phone, status, start date, rent'),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    onEdit();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.bolt_rounded, color: AppColors.action),
+                  title: const Text('Electricity Setup'),
+                  subtitle: Text(data.elecMode == 'meter'
+                      ? 'Meter-based (Unit readings)'
+                      : (data.elecMode == 'fixed'
+                          ? 'Fixed (₹${(data.fixedElecAmountPaise / 100).toStringAsFixed(0)}/mo auto-billed)'
+                          : 'No meter (Not available / No need)')),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    _showElectricityModeDialog(context, tenancyId, data, onRefresh);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.history_rounded),
+                  title: const Text('Audit trail'),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    context.pushNamed('audit-trail', pathParameters: {'tenancyId': tenancyId});
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.password_rounded, color: AppColors.action),
+                  title: const Text('Set / Reset tenant password'),
+                  subtitle: const Text('Configure portal password for this resident'),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    _showSetPasswordDialog(context, tenancyId, data.name, data.mobile);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.folder_outlined),
+                  title: const Text('Documents'),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    context.pushNamed('documents', pathParameters: {'tenancyId': tenancyId});
+                  },
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.delete_forever_rounded, color: AppColors.error),
+                  title: const Text('Delete tenant', style: TextStyle(color: AppColors.error, fontWeight: FontWeight.w600)),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    _confirmDeleteTenant(context, tenancyId, data.name);
+                  },
+                ),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.bolt_rounded, color: AppColors.action),
-              title: const Text('Electricity Setup'),
-              subtitle: Text(data.elecMode == 'meter'
-                  ? 'Meter-based (Unit readings)'
-                  : (data.elecMode == 'fixed'
-                      ? 'Fixed (₹${(data.fixedElecAmountPaise / 100).toStringAsFixed(0)}/mo auto-billed)'
-                      : 'No meter (Not available / No need)')),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                _showElectricityModeDialog(context, tenancyId, data, onRefresh);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.swap_vert_rounded),
-              title: const Text('Advance / Deposit'),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                context.pushNamed('advances', pathParameters: {'tenancyId': tenancyId});
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.history_rounded),
-              title: const Text('Audit trail'),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                context.pushNamed('audit-trail', pathParameters: {'tenancyId': tenancyId});
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.share_rounded, color: Color(0xFF25D366)),
-              title: const Text('Send WhatsApp dues summary'),
-              subtitle: const Text('Exact breakdown or fully-cleared notice'),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                _sendWhatsAppDuesSummary(context, data, tenancyId);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.password_rounded, color: AppColors.action),
-              title: const Text('Set / Reset tenant password'),
-              subtitle: const Text('Configure portal password for this resident'),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                _showSetPasswordDialog(context, tenancyId, data.name, data.mobile);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.folder_outlined),
-              title: const Text('Documents'),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                context.pushNamed('documents', pathParameters: {'tenancyId': tenancyId});
-              },
-            ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.delete_forever_rounded, color: AppColors.error),
-              title: const Text('Delete tenant', style: TextStyle(color: AppColors.error, fontWeight: FontWeight.w600)),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                _confirmDeleteTenant(context, tenancyId, data.name);
-              },
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1416,7 +1458,7 @@ class _OverviewTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
       children: [
         // Quick actions
         Row(
@@ -1632,51 +1674,393 @@ class _ChargesTab extends StatelessWidget {
   const _ChargesTab({required this.data});
   final _ProfileData data;
 
+  String _formatMonth(String canonicalMonth) {
+    try {
+      final parts = canonicalMonth.split('-');
+      if (parts.length >= 2) {
+        final dt = DateTime(int.parse(parts[0]), int.parse(parts[1]), 1);
+        return DateFormat('MMMM yyyy').format(dt);
+      }
+    } catch (_) {}
+    return canonicalMonth;
+  }
+
+  void _showChargeDetailsDialog(BuildContext context, _ChargeItem c) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(sheetCtx).size.height * 0.85,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.border,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: c.type == 'rent' ? AppColors.actionBg : AppColors.warningBg,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(
+                          c.type == 'rent' ? Icons.home_outlined : Icons.bolt_rounded,
+                          size: 22,
+                          color: c.type == 'rent' ? AppColors.action : AppColors.warning,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('${c.label} • ${_formatMonth(c.month)}', style: AppTextStyles.h3),
+                            Text(
+                              c.type == 'rent' ? 'Monthly rental charge' : 'Electricity utility charge',
+                              style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                            ),
+                          ],
+                        ),
+                      ),
+                      StatusChip(
+                        label: _statusLabel(c.status),
+                        type: _statusType(c.status),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+
+                  // Financial Breakdown Box
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceVariant.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _buildStat('Total Billed', CurrencyFormatter.fromPaise(c.amountPaise), AppColors.ink),
+                        Container(width: 1, height: 32, color: AppColors.border),
+                        _buildStat('Paid / Settled', CurrencyFormatter.fromPaise(c.allocatedPaise), AppColors.success),
+                        Container(width: 1, height: 32, color: AppColors.border),
+                        _buildStat(
+                          'Balance Due',
+                          CurrencyFormatter.fromPaise(c.outstandingPaise),
+                          c.outstandingPaise > 0 ? AppColors.error : AppColors.success,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Charge Note (if any)
+                  if (c.note != null && c.note!.trim().isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.amber.shade200),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.notes_rounded, size: 18, color: Colors.amber.shade800),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Charge Note / Comment',
+                                    style: AppTextStyles.captionBold.copyWith(color: Colors.amber.shade900)),
+                                const SizedBox(height: 2),
+                                Text(c.note!, style: AppTextStyles.bodyRegular),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // Payment Chunks Breakdown (Google Sheets style)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.table_chart_outlined, size: 18, color: AppColors.action),
+                          const SizedBox(width: 6),
+                          Text('Payment Chunks', style: AppTextStyles.h3),
+                        ],
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceVariant,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '${c.chunks.length} ${c.chunks.length == 1 ? "chunk" : "chunks"}',
+                          style: AppTextStyles.captionBold.copyWith(color: AppColors.inkMuted),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  if (c.chunks.isEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Column(
+                        children: [
+                          const Icon(Icons.hourglass_empty_rounded, size: 32, color: AppColors.inkMuted),
+                          const SizedBox(height: 8),
+                          Text('No payment chunks recorded yet', style: AppTextStyles.bodyMedium),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Payments recorded via the "Record payment" button will automatically allocate and appear here.',
+                            style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else ...[
+                    ...List.generate(c.chunks.length, (idx) {
+                      final chunk = c.chunks[idx];
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AppColors.border),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.actionBg,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        'Chunk #${idx + 1}',
+                                        style: AppTextStyles.captionBold.copyWith(color: AppColors.action, fontSize: 11),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      chunk.paymentDate.isNotEmpty ? chunk.paymentDate : 'Recorded',
+                                      style: AppTextStyles.captionBold,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      '· ${chunk.method.toUpperCase()}',
+                                      style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                                    ),
+                                  ],
+                                ),
+                                Text(
+                                  CurrencyFormatter.fromPaise(chunk.amountPaise),
+                                  style: AppTextStyles.currencySmall.copyWith(
+                                    color: AppColors.success,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (chunk.notes != null && chunk.notes!.trim().isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: AppColors.surfaceVariant.withValues(alpha: 0.5),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Icon(Icons.chat_bubble_outline_rounded, size: 13, color: AppColors.inkMuted),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        chunk.notes!,
+                                        style: AppTextStyles.caption.copyWith(fontStyle: FontStyle.italic),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            if (chunk.reference != null && chunk.reference!.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'Ref: ${chunk.reference}',
+                                style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted, fontSize: 11),
+                              ),
+                            ],
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: () => Navigator.pop(sheetCtx),
+                    icon: const Icon(Icons.check_rounded),
+                    label: const Text('Done'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStat(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(label, style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted)),
+        const SizedBox(height: 2),
+        Text(value, style: AppTextStyles.currencySmall.copyWith(color: color, fontWeight: FontWeight.w700)),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView.separated(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
       itemCount: data.charges.length,
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (_, i) {
         final c = data.charges[i];
-        return Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
+        final tooltipMsg = c.chunks.isEmpty
+            ? '${c.label} (${c.month}): Billed ${CurrencyFormatter.fromPaise(c.amountPaise)} · Outstanding: ${CurrencyFormatter.fromPaise(c.outstandingPaise)}'
+            : '${c.label} (${c.month})\n${c.chunks.map((chk) => "• Chunk: ${CurrencyFormatter.fromPaise(chk.amountPaise)} on ${chk.paymentDate}${chk.notes != null ? ' (${chk.notes})' : ''}").join('\n')}';
+
+        return Tooltip(
+          message: tooltipMsg,
+          waitDuration: const Duration(milliseconds: 300),
+          child: InkWell(
+            onTap: () => _showChargeDetailsDialog(context, c),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 36, height: 36,
-                decoration: BoxDecoration(
-                  color: c.type == 'rent' ? AppColors.actionBg : AppColors.warningBg,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  c.type == 'rent' ? Icons.home_outlined : Icons.bolt_rounded,
-                  size: 18,
-                  color: c.type == 'rent' ? AppColors.action : AppColors.warning,
-                ),
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.border),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(c.label, style: AppTextStyles.bodyMedium),
-                  Text(c.month, style: AppTextStyles.caption),
-                ]),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: c.type == 'rent' ? AppColors.actionBg : AppColors.warningBg,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      c.type == 'rent' ? Icons.home_outlined : Icons.bolt_rounded,
+                      size: 18,
+                      color: c.type == 'rent' ? AppColors.action : AppColors.warning,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Row(
+                        children: [
+                          Text(c.label, style: AppTextStyles.bodyMedium),
+                          if (c.chunks.isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.shade50,
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: Colors.blue.shade200, width: 0.8),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.comment_outlined, size: 10, color: Colors.blue.shade700),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    '${c.chunks.length}',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.blue.shade800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                          if (c.note != null && c.note!.isNotEmpty) ...[
+                            const SizedBox(width: 4),
+                            Icon(Icons.sticky_note_2_outlined, size: 14, color: Colors.amber.shade700),
+                          ],
+                        ],
+                      ),
+                      Text(c.month, style: AppTextStyles.caption),
+                    ]),
+                  ),
+                  Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                    Text(CurrencyFormatter.fromPaise(c.amountPaise), style: AppTextStyles.currencySmall),
+                    const SizedBox(height: 4),
+                    StatusChip(
+                      label: _statusLabel(c.status),
+                      type: _statusType(c.status),
+                    ),
+                  ]),
+                  const SizedBox(width: 6),
+                  const Icon(Icons.chevron_right_rounded, size: 16, color: AppColors.inkMuted),
+                ],
               ),
-              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text(CurrencyFormatter.fromPaise(c.amountPaise), style: AppTextStyles.currencySmall),
-                const SizedBox(height: 4),
-                StatusChip(
-                  label: _statusLabel(c.status),
-                  type: _statusType(c.status),
-                ),
-              ]),
-            ],
+            ),
           ),
         );
       },
@@ -1709,7 +2093,7 @@ class _PaymentsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView.separated(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
       itemCount: data.payments.length,
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (_, i) {
@@ -2052,7 +2436,7 @@ class _MeterTab extends StatelessWidget {
     final elecCharges = data.charges.where((c) => c.type == 'electricity').toList();
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
       children: [
         if (data.elecMode == 'fixed') ...[
           _buildFixedCard(context),
@@ -2329,7 +2713,7 @@ class _DetailsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
       children: [
         Card(
           elevation: 0,
@@ -2655,10 +3039,45 @@ class _ProfileData {
   int get totalDuePaise => rentDuePaise + elecDuePaise;
 }
 
+class _ChargeChunk {
+  final String paymentId;
+  final int amountPaise;
+  final String paymentDate;
+  final String method;
+  final String? notes;
+  final String? reference;
+
+  const _ChargeChunk({
+    required this.paymentId,
+    required this.amountPaise,
+    required this.paymentDate,
+    required this.method,
+    this.notes,
+    this.reference,
+  });
+}
+
 class _ChargeItem {
+  final String id;
   final String label, month, type, status;
   final int amountPaise;
-  const _ChargeItem({required this.label, required this.month, required this.amountPaise, required this.type, required this.status});
+  final int allocatedPaise;
+  final int outstandingPaise;
+  final String? note;
+  final List<_ChargeChunk> chunks;
+
+  const _ChargeItem({
+    required this.id,
+    required this.label,
+    required this.month,
+    required this.amountPaise,
+    required this.allocatedPaise,
+    required this.outstandingPaise,
+    required this.type,
+    required this.status,
+    this.note,
+    this.chunks = const [],
+  });
 }
 
 class _PaymentItem {
@@ -2826,62 +3245,6 @@ Future<void> _showSetPasswordDialog(
   );
 }
 
-Future<void> _sendWhatsAppDuesSummary(
-  BuildContext context,
-  _ProfileData data,
-  String tenancyId,
-) async {
-  try {
-    final client = Supabase.instance.client;
-    final allocRes = await client
-        .from('charge_allocation_totals')
-        .select('charge_type, billing_month, amount_paise, allocated_paise, outstanding_paise')
-        .eq('tenancy_id', tenancyId)
-        .order('billing_month', ascending: true);
-
-    final List<OutstandingRentMonth> rentMonths = [];
-    int totalRentDuePaise = 0;
-    int totalElecDuePaise = 0;
-
-    for (final r in (allocRes as List<dynamic>)) {
-      final cType = (r['charge_type'] as String?) ?? 'rent';
-      final out = (r['outstanding_paise'] as num?)?.toInt() ?? 0;
-      final bMonth = (r['billing_month'] as String?) ?? '';
-
-      if (out > 0) {
-        if (cType == 'rent') {
-          totalRentDuePaise += out;
-          rentMonths.add(OutstandingRentMonth(
-            billingMonth: bMonth,
-            duePaise: out,
-          ));
-        } else if (cType == 'electricity') {
-          totalElecDuePaise += out;
-        }
-      }
-    }
-
-    final payload = WhatsAppDuesSummaryPayload(
-      tenantName: data.name,
-      mobile: data.mobile,
-      outstandingRentMonths: rentMonths,
-      totalRentDuePaise: totalRentDuePaise,
-      totalElecDuePaise: totalElecDuePaise,
-    );
-
-    if (!context.mounted) return;
-    await WhatsAppService.shareDuesSummary(context: context, payload: payload);
-  } catch (e) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to prepare WhatsApp dues notice: $e'),
-          backgroundColor: AppColors.error,
-        ),
-      );
-    }
-  }
-}
 
 Future<void> _showElectricityModeDialog(
   BuildContext context,

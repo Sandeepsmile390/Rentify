@@ -4,10 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/routing/routes.dart';
 import '../../../core/services/update_service.dart';
+import '../../../core/services/notification_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/utilities/avatar_helper.dart';
 import '../../../core/utilities/currency_formatter.dart';
 import '../../../core/widgets/status_chip.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -56,18 +60,23 @@ class _TenantLedgerScreenState extends ConsumerState<TenantLedgerScreen> {
       if (tenancy == null && userEmail.isNotEmpty) {
         final cleanDigits = userEmail.split('@').first.replaceAll(RegExp(r'\D'), '');
         if (cleanDigits.length >= 10) {
-          tenancy = await client
+          try {
+            await client.rpc('link_my_tenancy_profile', params: {'p_mobile': cleanDigits});
+            if (userId != null) {
+              tenancy = await client
+                  .from('tenancies')
+                  .select('id, unit_id, tenant_name, profile_id, login_enabled, is_active')
+                  .eq('profile_id', userId)
+                  .maybeSingle();
+            }
+          } catch (_) {}
+
+          tenancy ??= await client
               .from('tenancies')
               .select('id, unit_id, tenant_name, profile_id, login_enabled, is_active')
               .ilike('mobile', '%$cleanDigits%')
               .eq('is_active', true)
               .maybeSingle();
-
-          if (tenancy != null && userId != null && tenancy['profile_id'] == null) {
-            try {
-              await client.from('tenancies').update({'profile_id': userId}).eq('id', tenancy['id']);
-            } catch (_) {}
-          }
         }
       }
 
@@ -170,19 +179,52 @@ class _TenantLedgerScreenState extends ConsumerState<TenantLedgerScreen> {
 
       // Fetch advance balance
       int advanceBalance = 0;
-      final advRes = await client
-          .from('tenant_advances')
-          .select('id')
-          .eq('tenancy_id', tId)
-          .maybeSingle();
+      try {
+        final advRes = await client
+            .from('tenant_advances')
+            .select('id')
+            .eq('tenancy_id', tId)
+            .maybeSingle();
 
-      if (advRes != null) {
-        final txnsRes = await client
-            .from('advance_transactions')
-            .select('amount_paise')
-            .eq('advance_id', advRes['id']);
-        for (final t in (txnsRes as List<dynamic>)) {
-          advanceBalance += ((t['amount_paise'] as num?)?.toInt() ?? 0);
+        if (advRes != null) {
+          final txnsRes = await client
+              .from('advance_transactions')
+              .select('amount_paise, txn_type')
+              .eq('advance_id', advRes['id']);
+          for (final t in (txnsRes as List<dynamic>)) {
+            final amt = (t['amount_paise'] as num?)?.toInt() ?? 0;
+            final type = (t['txn_type'] as String?) ?? 'received';
+            if (type == 'received') {
+              advanceBalance += amt;
+            } else if (type == 'applied' || type == 'refunded') {
+              advanceBalance -= amt;
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Notice loading tenant advance: $e');
+      }
+
+      // ── Automated weekly dues reminder notification on device ──
+      final totalDues = rentDue + elecDue;
+      if (totalDues > 0) {
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          final lastReminderTs = prefs.getInt('dues_reminder_${tId}_ts') ?? 0;
+          final nowMs = DateTime.now().millisecondsSinceEpoch;
+          const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+
+          if (nowMs - lastReminderTs >= sevenDaysMs) {
+            final amtStr = CurrencyFormatter.fromPaise(totalDues);
+            await NotificationService.showSystemNotification(
+              id: 8881,
+              title: '⚠️ Rentify: Outstanding Dues Reminder',
+              body: 'Dear $name, you have pending dues of $amtStr for $unitId. Please settle your dues via the portal.',
+            );
+            await prefs.setInt('dues_reminder_${tId}_ts', nowMs);
+          }
+        } catch (e) {
+          debugPrint('Notice checking dues reminder: $e');
         }
       }
 
@@ -264,7 +306,7 @@ class _TenantLedgerScreenState extends ConsumerState<TenantLedgerScreen> {
                 slivers: [
                   // ── Header app bar ────────────────────────────
                   SliverAppBar(
-                    expandedHeight: 180,
+                    expandedHeight: 220,
                     pinned: true,
                     backgroundColor: AppColors.navy,
                     foregroundColor: Colors.white,
@@ -272,16 +314,20 @@ class _TenantLedgerScreenState extends ConsumerState<TenantLedgerScreen> {
                       background: _TenantHeader(data: _data!),
                     ),
                     title: Text(
-                      widget.isTenantHome ? 'My account' : 'My ledger',
+                      widget.isTenantHome ? 'Resident Portal' : 'My Ledger',
                       style: AppTextStyles.h2.copyWith(color: Colors.white),
                     ),
                   ),
 
                   // ── Summary cards (home only) ─────────────────
-                  if (widget.isTenantHome)
+                  if (widget.isTenantHome) ...[
                     SliverToBoxAdapter(
                       child: _SummarySection(data: _data!),
                     ),
+                    SliverToBoxAdapter(
+                      child: _LandlordCard(data: _data!),
+                    ),
+                  ],
 
                   // ── Section title ─────────────────────────────
                   SliverToBoxAdapter(
@@ -327,18 +373,49 @@ class _TenantHeader extends StatelessWidget {
     final hasDues = data.totalDuePaise > 0;
     return Container(
       color: AppColors.navy,
-      padding: const EdgeInsets.fromLTRB(20, 80, 20, 20),
+      padding: const EdgeInsets.fromLTRB(20, 75, 20, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          Text(
-            'Hello, ${data.name.split(' ').first}',
-            style: AppTextStyles.h2.copyWith(color: Colors.white),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '${data.unitId} · ${data.billingMonth}',
-            style: AppTextStyles.caption.copyWith(color: Colors.white60),
+          Row(
+            children: [
+              AvatarHelper.buildAvatar(name: data.name, size: 48, fontSize: 20),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Welcome, ${data.name.split(' ').first}',
+                      style: AppTextStyles.h2.copyWith(color: Colors.white),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.white12,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            data.unitId,
+                            style: AppTextStyles.captionBold.copyWith(color: Colors.white),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          data.billingMonth,
+                          style: AppTextStyles.caption.copyWith(color: Colors.white70),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           Container(
@@ -360,17 +437,18 @@ class _TenantHeader extends StatelessWidget {
                 const SizedBox(width: 8),
                 Text(
                   hasDues
-                      ? 'Outstanding: ${CurrencyFormatter.fromPaise(data.totalDuePaise)}'
+                      ? 'Outstanding Dues: ${CurrencyFormatter.fromPaise(data.totalDuePaise)}'
                       : 'All dues cleared ✓',
                   style: AppTextStyles.bodyMedium.copyWith(
                     color: hasDues ? AppColors.error : AppColors.success,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
             ),
           ),
           if (hasDues) ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
             Row(
               children: [
                 Expanded(
@@ -378,7 +456,7 @@ class _TenantHeader extends StatelessWidget {
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.white,
                       side: const BorderSide(color: Colors.white38),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                     onPressed: () => context.go(Routes.tenantDetails),
@@ -392,7 +470,7 @@ class _TenantHeader extends StatelessWidget {
                     style: FilledButton.styleFrom(
                       backgroundColor: AppColors.action,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                     onPressed: () => _showPaymentOptions(context, data.totalDuePaise),
@@ -409,10 +487,13 @@ class _TenantHeader extends StatelessWidget {
   }
 
   void _showPaymentOptions(BuildContext context, int totalDuePaise) {
+    const upiId = 'repeshmehra360-1@okhdfcbanck';
+    const landlordName = 'Prabhu Lal Das';
+    const landlordPhone = '6299578325';
     final amtFormatted = CurrencyFormatter.fromPaise(totalDuePaise);
     final amtRupees = (totalDuePaise / 100).toStringAsFixed(2);
     final upiUri = Uri.parse(
-        'upi://pay?pa=rentify@upi&pn=Rentify%20Rent&am=$amtRupees&cu=INR&tn=Rent%20and%20Electricity%20Payment');
+        'upi://pay?pa=$upiId&pn=${Uri.encodeComponent(landlordName)}&am=$amtRupees&cu=INR&tn=${Uri.encodeComponent("Rent & Electricity Payment - ${data.unitId}")}');
 
     showModalBottomSheet(
       context: context,
@@ -421,7 +502,7 @@ class _TenantHeader extends StatelessWidget {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (bCtx) => Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -450,12 +531,38 @@ class _TenantHeader extends StatelessWidget {
                       style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted)),
                   const SizedBox(height: 4),
                   Text(amtFormatted, style: AppTextStyles.h1.copyWith(color: AppColors.action)),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.qr_code_rounded, size: 16, color: AppColors.inkMuted),
+                      const SizedBox(width: 6),
+                      Text('UPI ID: $upiId', style: AppTextStyles.captionBold),
+                      const SizedBox(width: 8),
+                      InkWell(
+                        onTap: () {
+                          Clipboard.setData(const ClipboardData(text: upiId));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('UPI ID copied to clipboard!'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                        child: const Padding(
+                          padding: EdgeInsets.all(4),
+                          child: Icon(Icons.copy_rounded, size: 16, color: AppColors.action),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
             const SizedBox(height: 20),
             FilledButton.icon(
               style: FilledButton.styleFrom(
+                backgroundColor: AppColors.action,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
@@ -465,18 +572,20 @@ class _TenantHeader extends StatelessWidget {
                   if (await canLaunchUrl(upiUri)) {
                     await launchUrl(upiUri, mode: LaunchMode.externalApplication);
                   } else {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('UPI payment app not found. Please pay via your bank app or contact landlord.'),
-                        ),
-                      );
-                    }
+                    await launchUrl(upiUri, mode: LaunchMode.externalNonBrowserApplication);
                   }
-                } catch (_) {}
+                } catch (_) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Opening UPI apps... If not opened, please copy UPI ID to pay in your app.'),
+                      ),
+                    );
+                  }
+                }
               },
               icon: const Icon(Icons.account_balance_wallet_rounded),
-              label: const Text('Pay via Any UPI App (GPay / PhonePe)'),
+              label: const Text('Pay via Any UPI App (GPay / PhonePe / Paytm / BHIM)'),
             ),
             const SizedBox(height: 12),
             OutlinedButton.icon(
@@ -486,16 +595,118 @@ class _TenantHeader extends StatelessWidget {
               ),
               onPressed: () async {
                 Navigator.pop(bCtx);
-                final waUri = Uri.parse(
-                    'https://wa.me/?text=${Uri.encodeComponent("Hello Landlord, I am submitting payment of $amtFormatted for room charges. Please verify.")}');
+                final msg = 'Hello $landlordName ji, I have sent payment of $amtFormatted for ${data.unitId} (${data.name}) via UPI to $upiId. Please confirm receipt.';
+                final waUri = Uri.parse('https://wa.me/91$landlordPhone?text=${Uri.encodeComponent(msg)}');
                 try {
                   await launchUrl(waUri, mode: LaunchMode.externalApplication);
                 } catch (_) {}
               },
               icon: const Icon(Icons.chat_bubble_outline_rounded, color: AppColors.success),
-              label: const Text('Send Confirmation to Landlord'),
+              label: const Text('Send Confirmation to Landlord on WhatsApp'),
             ),
-            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Landlord Contact Card ─────────────────────────────────────────
+
+class _LandlordCard extends StatelessWidget {
+  const _LandlordCard({required this.data});
+  final _TenantLedgerData data;
+
+  static const String landlordName = 'Prabhu Lal Das';
+  static const String landlordPhone = '6299578325';
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.border),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.navy,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.real_estate_agent_rounded, color: Colors.white, size: 24),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(landlordName, style: AppTextStyles.h3),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Property Owner / Landlord · +91 $landlordPhone',
+                        style: AppTextStyles.caption.copyWith(color: AppColors.inkMuted),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF25D366), // WhatsApp Brand Green
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    onPressed: () async {
+                      final msg = 'Hello $landlordName ji, I am contacting you regarding ${data.unitId} (${data.name}).';
+                      final uri = Uri.parse('https://wa.me/91$landlordPhone?text=${Uri.encodeComponent(msg)}');
+                      try {
+                        await launchUrl(uri, mode: LaunchMode.externalApplication);
+                      } catch (_) {}
+                    },
+                    icon: const Icon(Icons.chat_bubble_rounded, size: 16),
+                    label: const Text('Message on WhatsApp', style: TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: () async {
+                    final uri = Uri.parse('tel:$landlordPhone');
+                    try {
+                      await launchUrl(uri);
+                    } catch (_) {}
+                  },
+                  icon: const Icon(Icons.call_rounded, size: 16, color: AppColors.action),
+                  label: const Text('Call'),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -724,10 +935,10 @@ class _TenantLedgerData {
 
   int get totalDuePaise => rentDuePaise + elecDuePaise;
 
-  factory _TenantLedgerData.placeholder() => _TenantLedgerData(
+  factory _TenantLedgerData.placeholder() => const _TenantLedgerData(
     name: 'Priya Sharma', unitId: 'Room 07', billingMonth: 'October 2026',
     rentDuePaise: 550000, elecDuePaise: 135000, advanceBalancePaise: 1100000,
-    entries: const [
+    entries: [
       _LedgerEntry(type: 'charge', subtype: 'rent', label: 'Rent charge', date: '01 Oct 2026', amountPaise: 550000, status: 'pending'),
       _LedgerEntry(type: 'charge', subtype: 'electricity', label: 'Electricity charge', date: '01 Oct 2026', amountPaise: 135000, status: 'pending'),
       _LedgerEntry(type: 'payment', label: 'Payment received', date: '02 Sep 2026', amountPaise: 648000, note: 'Cash'),
