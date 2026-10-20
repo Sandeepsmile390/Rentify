@@ -1527,6 +1527,11 @@ class _OverviewTab extends StatelessWidget {
         // Rent info
         _SectionCard(
           title: 'Rent',
+          action: TextButton.icon(
+            icon: const Icon(Icons.trending_up, size: 16),
+            label: const Text('Revise / Increase'),
+            onPressed: () => _showReviseRentDialog(context, tenancyId, data, onRefresh),
+          ),
           child: Column(
             children: [
               _InfoRow('Current rate', '${CurrencyFormatter.fromPaise(data.currentRentPaise)}/month'),
@@ -3079,6 +3084,237 @@ Future<void> _showElectricityModeDialog(
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Electricity configuration updated successfully.'),
+          backgroundColor: AppColors.success,
+        ),
+      );
+    }
+  }
+}
+
+Future<void> _showReviseRentDialog(
+  BuildContext context,
+  String tenancyId,
+  _ProfileData data,
+  Future<void> Function() onRefresh,
+) async {
+  final client = Supabase.instance.client;
+  final newRentCtrl = TextEditingController();
+  final reasonCtrl = TextEditingController();
+  DateTime effectiveDate = DateTime.now();
+  effectiveDate = DateTime(effectiveDate.year, effectiveDate.month, 1);
+  final formKey = GlobalKey<FormState>();
+  final isSaving = ValueNotifier<bool>(false);
+
+  List<Map<String, dynamic>> rentHistory = [];
+  try {
+    final res = await client
+        .from('rent_rates')
+        .select('amount_paise, effective_from, effective_to, reason, created_at')
+        .eq('tenancy_id', tenancyId)
+        .order('effective_from', ascending: false);
+    rentHistory = List<Map<String, dynamic>>.from(res as List);
+  } catch (e) {
+    debugPrint('Error loading rent history: $e');
+  }
+  if (!context.mounted) return;
+
+  final updated = await showDialog<bool>(
+    context: context,
+    builder: (dCtx) {
+      return StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Row(
+              children: [
+                Icon(Icons.trending_up_rounded, color: AppColors.action),
+                SizedBox(width: 8),
+                Text('Revise / Increase Rent'),
+              ],
+            ),
+            content: SizedBox(
+              width: 440,
+              child: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: AppColors.border),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Current Rent Rate:', style: TextStyle(fontWeight: FontWeight.w600)),
+                            Text(
+                              '${CurrencyFormatter.fromPaise(data.currentRentPaise)} / mo',
+                              style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.action, fontSize: 16),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: newRentCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'New Monthly Rent (₹) *',
+                          prefixIcon: Icon(Icons.currency_rupee, size: 20),
+                          hintText: 'e.g. 6700',
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (val) {
+                          if (val == null || val.trim().isEmpty) return 'Enter new rent amount';
+                          final parsed = double.tryParse(val.trim());
+                          if (parsed == null || parsed <= 0) return 'Enter a valid amount';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 14),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Effective Month / Date', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                        subtitle: Text(
+                          DateFormat('dd MMM yyyy').format(effectiveDate),
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.ink),
+                        ),
+                        trailing: const Icon(Icons.calendar_month, color: AppColors.action),
+                        onTap: () async {
+                          final picked = await showDatePicker(
+                            context: ctx,
+                            initialDate: effectiveDate,
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime(2035),
+                          );
+                          if (picked != null) {
+                            setDialogState(() {
+                              effectiveDate = picked;
+                            });
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: reasonCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Reason / Remarks (Optional)',
+                          prefixIcon: Icon(Icons.notes, size: 20),
+                          hintText: 'e.g. Annual revision, upgraded room...',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      if (rentHistory.isNotEmpty) ...[
+                        const SizedBox(height: 20),
+                        const Divider(),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Rent Rate History',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.inkMuted),
+                        ),
+                        const SizedBox(height: 6),
+                        ...rentHistory.map((rh) {
+                          final amt = (rh['amount_paise'] as num?)?.toInt() ?? 0;
+                          final from = (rh['effective_from'] as String?) ?? '';
+                          final reason = rh['reason'] as String?;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '${CurrencyFormatter.fromPaise(amt)}/mo',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                    ),
+                                    if (reason != null && reason.isNotEmpty)
+                                      Text(reason, style: const TextStyle(fontSize: 11, color: AppColors.inkMuted)),
+                                  ],
+                                ),
+                                Text(
+                                  'From $from',
+                                  style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dCtx, false),
+                child: const Text('Cancel'),
+              ),
+              ValueListenableBuilder<bool>(
+                valueListenable: isSaving,
+                builder: (context, saving, _) => FilledButton(
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          if (!formKey.currentState!.validate()) return;
+                          isSaving.value = true;
+                          try {
+                            final newRentVal = double.tryParse(newRentCtrl.text.trim()) ?? 0;
+                            final newRentPaise = (newRentVal * 100).round();
+                            final effDateStr = DateFormat('yyyy-MM-dd').format(effectiveDate);
+                            final reason = reasonCtrl.text.trim().isEmpty ? null : reasonCtrl.text.trim();
+                            final userId = client.auth.currentUser?.id;
+
+                            await client.from('rent_rates').insert({
+                              'tenancy_id': tenancyId,
+                              'amount_paise': newRentPaise,
+                              'effective_from': effDateStr,
+                              'reason': reason,
+                              if (userId != null) 'created_by': userId,
+                            });
+
+                            if (dCtx.mounted) Navigator.pop(dCtx, true);
+                          } catch (e) {
+                            isSaving.value = false;
+                            if (dCtx.mounted) {
+                              ScaffoldMessenger.of(dCtx).showSnackBar(
+                                SnackBar(
+                                  content: Text('Failed to revise rent: $e'),
+                                  backgroundColor: AppColors.error,
+                                ),
+                              );
+                            }
+                          }
+                        },
+                  child: saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Text('Apply Rent Revision'),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+
+  if (updated == true) {
+    await onRefresh();
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Rent revised successfully!'),
           backgroundColor: AppColors.success,
         ),
       );
